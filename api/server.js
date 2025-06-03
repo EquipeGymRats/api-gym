@@ -150,7 +150,7 @@ app.post('/generate-nutrition-plan', async (req, res) => {
     Forneça descrições de alimentos realistas e acessíveis no Brasil. Não inclua informações nutricionais para os alimentos, apenas a descrição e quantidade.
     `;
 
-    console.log("Prompt enviado para Gemini:", prompt);
+    console.log("Prompt enviado para Gemini API:", prompt);
 
     try {
         const result = await model.generateContent(prompt);
