@@ -1,18 +1,38 @@
-// server.js
 const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@google/generative-ai');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const connectDB = require('../config/db'); // Corrigido para 'db'
+const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
+const authMiddleware = require('../middleware/auth'); // Importa o middleware de autenticação
+const adminAuth = require('../middleware/admin'); // Importa o middleware de autenticação
+const trainingRoutes = require('../routes/training');
+const User = require('../models/User');
+const Training = require('../models/Training');
+
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+
+// Conecta ao banco de dados
+connectDB();
 
 app.use(cors());
+app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu projeto
 app.use(express.json());
+
+// Rotas de autenticação
+app.use('/api/auth', authRoutes);
+app.use('/api/training', trainingRoutes); // <-- ADICIONAR AQUI
+// Exemplo de rota protegida por autenticação
+app.get('/api/protected', authMiddleware, (req, res) => {
+  // req.user agora conterá { id, username, email } do MongoDB
+  res.json({ message: 'Você acessou uma rota protegida!', user: req.user });
+});
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-app.post('/generate-nutrition-plan', async (req, res) => {
+app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
     const { weight, height, age, gender, activityLevel, goal, mealsPerDay, dietType, restrictions } = req.body;
 
     // --- Cálculo de Calorias no Backend (para passar à IA) ---
@@ -189,6 +209,165 @@ app.post('/generate-nutrition-plan', async (req, res) => {
         res.status(500).json({ error: 'Erro ao gerar plano alimentar: ' + error.message });
     }
 });
+
+// --- NOVAS ROTAS PARA O DASHBOARD ---
+
+// Rotas de Dashboard (agora protegidas por authMiddleware e adminAuth)
+app.get('/api/dashboard/users', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        // Selecionar todos os campos, exceto a senha
+        const users = await User.find().select('-password');
+        res.json(users);
+    } catch (error) {
+        console.error('Erro ao buscar usuários:', error);
+        res.status(500).json({ message: 'Erro ao buscar usuários.' });
+    }
+});
+
+// Rota para deletar usuário (protegida por authMiddleware e adminAuth)
+app.delete('/api/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Não permitir que um admin delete a si mesmo (opcional, mas boa prática)
+        if (req.user.id === id) {
+            return res.status(400).json({ message: 'Um administrador não pode deletar sua própria conta.' });
+        }
+
+        const userToDelete = await User.findById(id);
+        if (!userToDelete) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+
+        await Training.deleteMany({ user: id });
+        await User.findByIdAndDelete(id);
+
+        res.json({ message: 'Usuário e dados associados deletados com sucesso.' });
+    } catch (error) {
+        console.error('Erro ao deletar usuário:', error);
+        res.status(500).json({ message: 'Erro ao deletar usuário.' });
+    }
+});
+
+// Rota para editar usuário (protegida por authMiddleware e adminAuth)
+app.put('/api/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { username, email } = req.body;
+
+        if (!username || !email) {
+            return res.status(400).json({ message: 'Username e email são obrigatórios.' });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            id,
+            { username, email },
+            { new: true, runValidators: true }
+        ).select('-password');
+
+        if (!user) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+        res.json({ message: 'Usuário atualizado com sucesso.', user });
+    } catch (error) {
+        console.error('Erro ao editar usuário:', error);
+        res.status(500).json({ message: 'Erro ao editar usuário.' });
+    }
+});
+
+// NOVA ROTA: Atualizar Role do Usuário (admin/user)
+app.put('/api/admin/users/:id/role', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { role } = req.body;
+
+        if (!['user', 'admin'].includes(role)) {
+            return res.status(400).json({ message: 'Role inválida. Deve ser "user" ou "admin".' });
+        }
+
+        // Não permitir que um admin mude a própria role (para evitar se despromover acidentalmente)
+        if (req.user.id === id && role !== 'admin') {
+            return res.status(400).json({ message: 'Um administrador não pode remover sua própria permissão de administrador.' });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            id,
+            { role },
+            { new: true, runValidators: true }
+        ).select('-password');
+
+        if (!user) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+        res.json({ message: `Role do usuário atualizada para ${role} com sucesso.`, user });
+    } catch (error) {
+        console.error('Erro ao atualizar role do usuário:', error);
+        res.status(500).json({ message: 'Erro ao atualizar role do usuário.' });
+    }
+});
+
+// NOVA ROTA: Ativar/Desativar Usuário
+app.put('/api/admin/users/:id/status', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isActive } = req.body;
+
+        if (typeof isActive !== 'boolean') {
+            return res.status(400).json({ message: 'O status isActive deve ser um booleano (true/false).' });
+        }
+
+        // Não permitir que um admin desative a si mesmo
+        if (req.user.id === id && !isActive) {
+            return res.status(400).json({ message: 'Um administrador não pode desativar sua própria conta.' });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            id,
+            { isActive },
+            { new: true }
+        ).select('-password');
+
+        if (!user) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+        const statusMessage = isActive ? 'ativado' : 'desativado';
+        res.json({ message: `Usuário ${statusMessage} com sucesso.`, user });
+    } catch (error) {
+        console.error('Erro ao atualizar status do usuário:', error);
+        res.status(500).json({ message: 'Erro ao atualizar status do usuário.' });
+    }
+});
+
+
+// Renovar senha (placeholder - em um app real, enviaria um email com token) (protegida por authMiddleware e adminAuth)
+app.post('/api/admin/users/:id/reset-password', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user = await User.findById(id);
+
+        if (!user) {
+            return res.status(404).json({ message: 'Usuário não encontrado.' });
+        }
+
+        console.log(`[ADMIN AÇÃO] Solicitação de renovação de senha para: ${user.email}`);
+        res.json({ message: `Instruções de renovação de senha (fictícias) enviadas para ${user.email}.` });
+    } catch (error) {
+        console.error('Erro ao solicitar renovação de senha:', error);
+        res.status(500).json({ message: 'Erro ao solicitar renovação de senha.' });
+    }
+});
+
+// Rota para buscar todos os treinos e planos de nutrição (protegida por authMiddleware e adminAuth)
+app.get('/api/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const trainings = await Training.find().populate('user', 'username email');
+        res.json(trainings);
+    } catch (error) {
+        console.error('Erro ao buscar treinos e planos de nutrição:', error);
+        res.status(500).json({ message: 'Erro ao buscar treinos e planos de nutrição.' });
+    }
+});
+
 
 app.listen(port, () => {
     console.log(`Servidor rodando em http://localhost:${port}`);
