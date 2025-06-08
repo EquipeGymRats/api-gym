@@ -5,9 +5,15 @@ const authMiddleware = require('../middleware/auth'); // Middleware de autentica
 const Training = require('../models/Training'); // Importa o modelo de Treino
 const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@google/generative-ai');
 
+// Configuração da Gemini API (se estiver faltando, adicione aqui)
+const API_KEY = process.env.GEMINI_API_KEY; // Certifique-se de que a API_KEY está definida como variável de ambiente
+const genAI = new GoogleGenerativeAI(API_KEY);
+const model = genAI.getGenerativeModel({model: "gemini-1.5-flash" });
+
 // Rota para salvar ou atualizar o treino
 router.post('/', authMiddleware, async (req, res) => {
-    const { level, objective, frequency, equipment, timePerSession, plan } = req.body;
+    // DESESTRUTURAR TUDO QUE PODE VIR DO BODY
+    const { level, objective, frequency, equipment, timePerSession, plan, recommendations } = req.body;
     const userId = req.user.id; // ID do usuário autenticado
 
     try {
@@ -20,7 +26,8 @@ router.post('/', authMiddleware, async (req, res) => {
             training.frequency = frequency;
             training.equipment = equipment;
             training.timePerSession = timePerSession;
-            training.plan = plan;
+            training.plan = plan; // O plan agora está tipado no schema e será salvo corretamente
+            training.recommendations = recommendations; // SALVANDO AS RECOMENDAÇÕES AQUI
             training.dateGenerated = new Date();
         } else {
             // Cria um novo treino
@@ -32,201 +39,173 @@ router.post('/', authMiddleware, async (req, res) => {
                 equipment,
                 timePerSession,
                 plan,
+                recommendations, // CRIANDO E SALVANDO AS RECOMENDAÇÕES AQUI
                 dateGenerated: new Date()
             });
         }
 
         await training.save();
         res.status(200).json({ message: 'Treino salvo com sucesso!', training });
-
     } catch (error) {
-        console.error('Erro ao salvar treino:', error);
-        res.status(500).json({ message: 'Erro ao salvar o treino.' });
+        console.error('Erro ao salvar ou atualizar treino:', error);
+        // Adicionar detalhes do erro para depuração
+        if (error.name === 'ValidationError') {
+            const errors = Object.keys(error.errors).map(key => error.errors[key].message);
+            return res.status(400).json({ error: 'Erro de validação ao salvar treino.', details: errors });
+        }
+        res.status(500).json({ error: 'Erro ao salvar ou atualizar treino. Tente novamente mais tarde.' });
     }
 });
 
-// Rota para buscar o treino do usuário
+// Rota para carregar o treino salvo do usuário
 router.get('/', authMiddleware, async (req, res) => {
     const userId = req.user.id; // ID do usuário autenticado
 
     try {
         const training = await Training.findOne({ user: userId });
 
-        if (!training) {
-            return res.status(404).json({ message: 'Nenhum treino encontrado para este usuário.' });
+        if (training) {
+            res.status(200).json(training); // Retorna o objeto de treino completo
+        } else {
+            res.status(404).json({ message: 'Nenhum treino salvo encontrado para este usuário.' });
         }
-
-        res.status(200).json(training);
-
     } catch (error) {
-        console.error('Erro ao buscar treino:', error);
-        res.status(500).json({ message: 'Erro ao buscar o treino.' });
+        console.error('Erro ao carregar treino:', error);
+        res.status(500).json({ error: 'Erro ao carregar treino. Tente novamente mais tarde.' });
     }
 });
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-router.post('/generate-training-plan', authMiddleware, async (req, res) => {
+// Rota para gerar o treino com a Gemini API
+router.post('/generate-treino', authMiddleware, async (req, res) => {
     const { level, objective, frequency, equipment, timePerSession } = req.body;
 
-    if (!level || !objective || !frequency || !equipment || !timePerSession) {
-        return res.status(400).json({ message: 'Todos os campos são obrigatórios para gerar o treino.' });
-    }
+    // Ajuste o prompt para ser mais robusto e específico
+   const prompt = `
+        Você é um Personal Trainer especialista em musculação e calistenia. Seu objetivo é criar um plano de treino semanal detalhado, focado em atingir os objetivos específicos do usuário, considerando seu nível de experiência, frequência e equipamento disponível.
 
-    try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        O plano deve ser estruturado por dias da semana (Segunda a Domingo).
+        Para cada dia de treino, inclua 3-5 exercícios. Se um dia não tiver treino, deixe a lista de exercícios vazia.
+        Para cada exercício, forneça os seguintes detalhes em formato JSON:
+        - "name": Nome do exercício (string)
+        - "setsReps": Séries e repetições (ex: "3 séries de 8-12 repetições", "3 séries de 30-60 segundos") (string)
+        - "tips": **Dicas de execução e segurança (curtas e diretas, no máximo 1-2 frases).** (string)
+        - "videoId": Um ID único para o vídeo (string, pode ser um placeholder como "video_nome_exercicio")
+        - "youtubeUrl": **Uma URL REAL e válida de um vídeo do YouTube que explique o exercício em PORTUGUÊS.** Esta URL deve ser de um vídeo que realmente exista e demonstre o exercício. Exemplo: "https://www.youtube.com/watch?v=EXEMPLO_ID_VIDEO". É CRUCIAL que a URL seja de um vídeo existente e em português.
+        - "muscleGroups": Lista de grupos musculares principais trabalhados (array de strings, ex: ["peitoral", "tríceps", "ombros"])
+        - "difficulty": Nível de dificuldade de 1 (Muito Fácil) a 5 (Muito Difícil) (número inteiro)
+        - "tutorialSteps": Passos detalhados de como executar o exercício (array de strings)
 
-        const prompt = `Como um personal trainer experiente, crie um plano de treino semanal detalhado e personalizado para um indivíduo com as seguintes características:
-        - Nível de experiência: ${level}
-        - Objetivo principal: ${objective}
-        - Frequência semanal: ${frequency} vezes por semana
-        - Equipamentos disponíveis: ${equipment}
-        - Tempo por sessão: ${timePerSession} minutos
+        Forneça também uma propriedade "videosAvailable": true (booleano) para indicar que as URLs de vídeo foram incluídas e são válidas.
 
-        O plano deve ser formatado como um objeto JSON, onde a chave principal é "plan" e o valor é um array de objetos. Cada objeto no array representa um dia da semana (Segunda-feira a Domingo) e deve conter:
-        - "dayName": O nome do dia da semana (ex: "Segunda-feira", "Terça-feira", "Dia de Descanso").
-        - "exercises": Um array de objetos, onde cada objeto representa um exercício.
-            - Para cada exercício, inclua:
-                - "name": Nome do exercício.
-                - "setsReps": Número de séries e repetições (ex: "3 séries de 10-12 repetições").
-                - "tips": Uma dica curta e útil para a execução do exercício.
-                - "videoId": Um ID único para o vídeo tutorial (use o formato: "video_[nome-do-exercicio]", ex: "video_agachamento_livre").
-                - "youtubeUrl": Um link para um vídeo tutorial do YouTube que demonstre corretamente a execução do exercício.
-                - "muscleGroups": Array com os principais grupos musculares trabalhados (ex: ["quadríceps", "glúteos"]).
-                - "difficulty": Nível de dificuldade do exercício em uma escala de 1 a 5.
-                - "tutorialSteps": Array com 3-4 passos curtos para executar o exercício corretamente.
+        Finalmente, inclua uma seção "recommendations" com 3 a 5 dicas gerais de treino e nutrição que complementem os objetivos do usuário.
 
-        Se o dia for de descanso, o array "exercises" deve estar vazio, e o "dayName" deve indicar o dia da semana normal (ex: "Quarta-feira").
+        Detalhes do usuário para a geração do treino:
+        - Nível de Experiência: ${level}
+        - Objetivo Principal: ${objective}
+        - Frequência Semanal: ${frequency}
+        - Equipamento Disponível: ${equipment} (Se for 'Somente peso corporal', adapte os exercícios para calistenia)
+        - Tempo por Sessão: ${timePerSession} minutos
 
-        Exemplo de formato para um dia de treino:
+        Exemplo de formato JSON esperado:
         {
-            "dayName": "Segunda-feira",
-            "exercises": [
+            "plan": [
                 {
-                    "name": "Agachamento Livre",
-                    "setsReps": "4 séries de 8-10 repetições",
-                    "tips": "Mantenha a postura ereta e o abdômen contraído.",
-                    "videoId": "video_agachamento_livre",
-                    "youtubeUrl": "https://www.youtube.com/watch?v=aclHkVaku9U",
-                    "muscleGroups": ["quadríceps", "glúteos", "isquiotibiais"],
-                    "difficulty": 3,
-                    "tutorialSteps": [
-                        "Posicione os pés na largura dos ombros",
-                        "Desça como se fosse sentar em uma cadeira",
-                        "Mantenha o peito erguido e olhar à frente",
-                        "Empurre através dos calcanhares para subir"
+                    "dayName": "Segunda-feira",
+                    "exercises": [
+                        {
+                            "name": "Flexão de Braços",
+                            "setsReps": "3 séries de 8-12 repetições",
+                            "tips": "Mantenha o corpo reto e controle a descida.",
+                            "videoId": "flexao_bracos_video_id",
+                            "youtubeUrl": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", // Exemplo de URL de vídeo real
+                            "muscleGroups": ["peitoral", "tríceps", "ombros"],
+                            "difficulty": 3,
+                            "tutorialSteps": [
+                                "Deite-se de bruços com as mãos na largura dos ombros.",
+                                "Empurre o chão para levantar o tronco, mantendo o corpo alinhado.",
+                                "Abaixe lentamente até o peito quase tocar o chão.",
+                                "Repita o movimento."
+                            ]
+                        },
+                        // ... outros exercícios
                     ]
                 },
                 {
-                    "name": "Supino com Halteres",
-                    "setsReps": "3 séries de 10-12 repetições",
-                    "tips": "Controle a descida e subida do movimento.",
-                    "videoId": "video_supino_halteres",
-                    "youtubeUrl": "https://www.youtube.com/watch?v=VmB1G1K7v94",
-                    "muscleGroups": ["peitoral", "tríceps", "ombros"],
-                    "difficulty": 2,
-                    "tutorialSteps": [
-                        "Deite-se no banco com um halter em cada mão",
-                        "Posicione os halteres ao lado do peito",
-                        "Empurre para cima até os braços estenderem",
-                        "Desça lentamente até a posição inicial"
-                    ]
+                    "dayName": "Terça-feira",
+                    "exercises": [] // Dia de descanso ou sem exercícios
                 }
+                // ... outros dias
+            ],
+            "videosAvailable": true,
+            "recommendations": [
+                "Mantenha um déficit calórico moderado de 300-500 calorias por dia para perda de peso.",
+                "Consuma 1.6-2.2g de proteína por kg de peso corporal para recuperação e crescimento muscular.",
+                "Priorize o descanso adequado entre as séries (60-90 segundos para hipertrofia).",
+                "Foque na conexão mente-músculo e na execução correta de cada movimento."
             ]
         }
+    `;
 
-        Exemplo de formato para um dia de descanso:
-        {
-            "dayName": "Quarta-feira",
-            "exercises": []
-        }
+    try {
+        const generationConfig = {
+            temperature: 0.9,
+            topK: 1,
+            topP: 1,
+            maxOutputTokens: 2048,
+        };
 
-        Certifique-se de que o JSON seja válido e que não haja nenhum texto antes ou depois do objeto JSON. A resposta deve ser APENAS o JSON. Adapte os exercícios e a intensidade ao nível, objetivo e tempo por sessão. Se a frequência for menor que 7 dias, distribua os treinos de forma lógica e marque os dias restantes como dias de descanso (exercises: []). Inclua pelo menos 4-6 exercícios por dia de treino.
+        const safetySettings = [
+            {
+                category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+                category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+                category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+                category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+        ];
 
-        Para cada exercício, forneça dicas específicas e úteis que realmente ajudem o usuário a executar o movimento corretamente. Os passos do tutorial devem ser claros, concisos e em ordem lógica. Certifique-se de que os exercícios sejam adequados para o nível de experiência e equipamentos disponíveis.
+        const chat = model.startChat({
+            generationConfig,
+            safetySettings,
+            history: [],
+        });
 
-        IMPORTANTE: Para cada exercício, inclua um link real do YouTube (youtubeUrl) que demonstre corretamente a execução do exercício. Os links devem ser de vídeos existentes, curtos (preferencialmente menos de 2 minutos) e que mostrem claramente a técnica correta.
-        `;
+        const result = await chat.sendMessage(prompt);
+        let text = result.response.text();
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        let jsonResponse = response.text().trim();
-
-        // Tenta limpar o JSON se a IA incluir caracteres extras
-        if (jsonResponse.startsWith('```json')) {
-            jsonResponse = jsonResponse.substring(7);
-        }
-        if (jsonResponse.endsWith('```')) {
-            jsonResponse = jsonResponse.slice(0, -3);
-        }
+        // Tenta limpar o texto de qualquer markdown de código que a Gemini possa adicionar
+        text = text.replace(/```json\s*|```\s*/g, '').trim();
 
         let parsedData;
         try {
-            parsedData = JSON.parse(jsonResponse);
+            parsedData = JSON.parse(text);
         } catch (jsonError) {
-            console.error("Erro ao fazer parse do JSON retornado pela Gemini (Treino):", jsonError);
-            console.error("Texto da resposta que tentou parsear (Treino):", jsonResponse);
-            return res.status(500).json({ error: "A IA gerou uma resposta para o treino, mas não foi possível fazer parse do JSON válido." });
+            console.error('Erro ao parsear JSON da Gemini API:', jsonError);
+            console.error('Texto recebido da Gemini:', text);
+            return res.status(500).json({ error: 'Formato de resposta inesperado da Gemini API.' });
         }
-
-        if (!parsedData || !Array.isArray(parsedData.plan)) {
-            throw new Error("A resposta da IA para o treino não contém um array 'plan' válido no formato esperado.");
-        }
-
-        // Garante que o plano tenha 7 dias, preenchendo com dias de descanso se necessário
-        const dayNames = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"];
-        if (parsedData.plan.length < 7) {
-            console.warn(`A Gemini gerou ${parsedData.plan.length} dias de treino, esperava 7. Completando os dias restantes com descanso.`);
-            const existingDays = parsedData.plan.map(day => day.dayName);
-            dayNames.forEach(dayName => {
-                if (!existingDays.includes(dayName)) {
-                    parsedData.plan.push({
-                        dayName: dayName,
-                        exercises: []
-                    });
-                }
-            });
-            // Ordena os dias para garantir a ordem correta
-            parsedData.plan.sort((a, b) => dayNames.indexOf(a.dayName) - dayNames.indexOf(b.dayName));
-        }
-
-        // Adiciona campo para indicar se há vídeos disponíveis
-        parsedData.videosAvailable = true; // Agora temos vídeos do YouTube disponíveis
         
-        // Adiciona campo para recomendações gerais baseadas no objetivo
-        const recommendationsByObjective = {
-            'hipertrofia': [
-                "Mantenha um déficit calórico moderado de 300-500 calorias por dia",
-                "Consuma 1.6-2.2g de proteína por kg de peso corporal",
-                "Priorize o descanso adequado entre as séries (60-90 segundos)",
-                "Foque na contração muscular e não apenas em levantar peso"
-            ],
-            'perda de peso': [
-                "Mantenha um déficit calórico moderado de 300-500 calorias por dia",
-                "Consuma 1.8-2.2g de proteína por kg de peso corporal para preservar massa muscular",
-                "Adicione exercícios cardiovasculares nos dias de descanso",
-                "Priorize alimentos integrais e com alto teor de fibras para maior saciedade"
-            ],
-            'resistencia': [
-                "Consuma carboidratos complexos antes dos treinos para energia sustentada",
-                "Mantenha-se bem hidratado antes, durante e após os treinos",
-                "Aumente gradualmente o volume de treino a cada 2-3 semanas",
-                "Inclua exercícios cardiovasculares de baixa intensidade nos dias de descanso"
-            ],
-            'forca': [
-                "Consuma 1.8-2.2g de proteína por kg de peso corporal",
-                "Priorize descanso adequado entre séries (2-5 minutos)",
-                "Foque em exercícios compostos com cargas progressivas",
-                "Garanta 7-9 horas de sono para recuperação muscular e neural"
-            ]
-        };
-        
-        parsedData.recommendations = recommendationsByObjective[objective] || [
-            "Mantenha uma alimentação balanceada com proteínas, carboidratos e gorduras saudáveis",
-            "Hidrate-se adequadamente antes, durante e após os treinos",
-            "Respeite os dias de descanso para recuperação muscular",
-            "Aumente gradualmente a intensidade dos exercícios conforme sua evolução"
-        ];
+        // Adiciona os parâmetros de entrada de volta ao objeto retornado para o frontend
+        parsedData.level = level;
+        parsedData.objective = objective;
+        parsedData.frequency = frequency;
+        parsedData.equipment = equipment;
+        parsedData.timePerSession = timePerSession;
+
+        // As recomendações já vêm da IA, não precisamos sobrescrever aqui
+        // No seu snippet anterior, você tinha uma lógica para adicionar recomendações baseadas no objetivo.
+        // Se você quer que a IA *sempre* forneça as recomendações, remova a lógica abaixo.
+        // Se você quer que o backend tenha um fallback ou adicione recomendações específicas, mantenha-a.
+        // Pela sua descrição, parece que a IA já está retornando as recomendações no JSON.
 
         res.json(parsedData);
 
@@ -235,7 +214,5 @@ router.post('/generate-training-plan', authMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Erro ao gerar plano de treino. Tente novamente mais tarde.' });
     }
 });
-
-
 
 module.exports = router;
