@@ -22,10 +22,10 @@ app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu pro
 app.use(express.json());
 
 // Rotas de autenticação
-app.use('/api/auth', authRoutes);
-app.use('/api/training', trainingRoutes); // <-- ADICIONAR AQUI
+app.use('/auth', authRoutes);
+app.use('/training', trainingRoutes); // <-- ADICIONAR AQUI
 // Exemplo de rota protegida por autenticação
-app.get('/api/protected', authMiddleware, (req, res) => {
+app.get('/protected', authMiddleware, (req, res) => {
   // req.user agora conterá { id, username, email } do MongoDB
   res.json({ message: 'Você acessou uma rota protegida!', user: req.user });
 });
@@ -213,7 +213,7 @@ app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
 // --- NOVAS ROTAS PARA O DASHBOARD ---
 
 // Rotas de Dashboard (agora protegidas por authMiddleware e adminAuth)
-app.get('/api/dashboard/users', authMiddleware, adminAuth, async (req, res) => {
+app.get('/dashboard/users', authMiddleware, adminAuth, async (req, res) => {
     try {
         // Selecionar todos os campos, exceto a senha
         const users = await User.find().select('-password');
@@ -225,7 +225,7 @@ app.get('/api/dashboard/users', authMiddleware, adminAuth, async (req, res) => {
 });
 
 // Rota para deletar usuário (protegida por authMiddleware e adminAuth)
-app.delete('/api/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
+app.delete('/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
 
@@ -250,7 +250,7 @@ app.delete('/api/admin/users/:id', authMiddleware, adminAuth, async (req, res) =
 });
 
 // Rota para editar usuário (protegida por authMiddleware e adminAuth)
-app.put('/api/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
+app.put('/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { username, email } = req.body;
@@ -276,7 +276,7 @@ app.put('/api/admin/users/:id', authMiddleware, adminAuth, async (req, res) => {
 });
 
 // NOVA ROTA: Atualizar Role do Usuário (admin/user)
-app.put('/api/admin/users/:id/role', authMiddleware, adminAuth, async (req, res) => {
+app.put('/admin/users/:id/role', authMiddleware, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { role } = req.body;
@@ -307,7 +307,7 @@ app.put('/api/admin/users/:id/role', authMiddleware, adminAuth, async (req, res)
 });
 
 // NOVA ROTA: Ativar/Desativar Usuário
-app.put('/api/admin/users/:id/status', authMiddleware, adminAuth, async (req, res) => {
+app.put('/admin/users/:id/status', authMiddleware, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { isActive } = req.body;
@@ -340,7 +340,7 @@ app.put('/api/admin/users/:id/status', authMiddleware, adminAuth, async (req, re
 
 
 // Renovar senha (placeholder - em um app real, enviaria um email com token) (protegida por authMiddleware e adminAuth)
-app.post('/api/admin/users/:id/reset-password', authMiddleware, adminAuth, async (req, res) => {
+app.post('/admin/users/:id/reset-password', authMiddleware, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const user = await User.findById(id);
@@ -358,7 +358,7 @@ app.post('/api/admin/users/:id/reset-password', authMiddleware, adminAuth, async
 });
 
 // Rota para buscar todos os treinos e planos de nutrição (protegida por authMiddleware e adminAuth)
-app.get('/api/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, res) => {
+app.get('/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, res) => {
     try {
         const trainings = await Training.find().populate('user', 'username email');
         res.json(trainings);
