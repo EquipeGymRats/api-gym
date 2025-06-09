@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User'); // Certifique-se de que o caminho está correto
 const authMiddleware = require('../middleware/auth'); // Importa o middleware de autenticação
 
+
+
 // Rota de Registro
 router.post('/register', async (req, res) => {
     const { username, email, password } = req.body;
