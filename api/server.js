@@ -69,8 +69,8 @@ app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
     // --- Fim do Cálculo de Calorias ---
 
     const model = genAI.getGenerativeModel({
-        model: "gemini-1.5-flash", // Mantenha este ou "gemini-1.5-pro"
-        safetySettings: [
+    model: "gemini-1.5-flash",
+            safetySettings: [
             {
                 category: HarmCategory.HARM_CATEGORY_HARASSMENT,
                 threshold: HarmBlockThreshold.BLOCK_NONE,
@@ -88,87 +88,78 @@ app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
                 threshold: HarmBlockThreshold.BLOCK_NONE,
             },
         ],
-        generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: "object",
-                properties: {
-                    plan: {
-                        type: "array",
-                        items: {
-                            type: "object",
-                            properties: {
-                                dayName: { type: "string", description: "Nome do dia da semana (ex: Segunda-feira)" },
-                                meals: {
-                                    type: "array",
-                                    items: {
-                                        type: "object",
-                                        properties: {
-                                            mealName: { type: "string", description: "Nome da refeição (ex: Café da Manhã)" },
-                                            foods: {
-                                                type: "array",
-                                                items: { type: "string", description: "Descrição do alimento com quantidade e unidade (ex: 100g de frango grelhado)" }
-                                            },
-                                            // NOVO: Campo para o ícone da refeição
-                                            icon: { type: "string", description: "Classe Font Awesome para o ícone da refeição (ex: fas fa-coffee, fas fa-drumstick-bite, fas fa-apple-alt, fas fa-utensils, fas fa-moon). Use icones Font Awesome 6 Free." }
+    generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+            type: "object",
+            properties: {
+                plan: {
+                    type: "array",
+                    items: {
+                        type: "object",
+                        properties: {
+                            dayName: { type: "string" },
+                            meals: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        mealName: { type: "string" },
+                                        foods: {
+                                            type: "array",
+                                            items: { type: "string" }
                                         },
-                                        required: ["mealName", "foods", "icon"] // icon agora é obrigatório
-                                    }
+                                        icon: { type: "string", description: "Classe Font Awesome 6 Free (ex: fas fa-coffee)" },
+                                        // --- NOVOS CAMPOS ---
+                                        macronutrients: {
+                                            type: "object",
+                                            description: "Estimativa de macronutrientes para a refeição.",
+                                            properties: {
+                                                protein: { type: "string", description: "Proteínas em gramas (ex: '30g')" },
+                                                carbohydrates: { type: "string", description: "Carboidratos em gramas (ex: '50g')" },
+                                                fats: { type: "string", description: "Gorduras em gramas (ex: '15g')" }
+                                            }
+                                        },
+                                        preparationTip: {
+                                            type: "string",
+                                            description: "Uma dica curta de preparo ou receita simples para a refeição.",
+                                            nullable: true
+                                        }
+                                        // --- FIM DOS NOVOS CAMPOS ---
+                                    },
+                                    required: ["mealName", "foods", "icon", "macronutrients"]
                                 }
-                            },
-                            required: ["dayName", "meals"]
-                        }
-                    },
-                    // NOVO: Campo opcional para dicas gerais do plano
-                    tips: {
-                        type: "array",
-                        items: { type: "string", description: "Dicas importantes sobre o plano alimentar. Mande apenas se houver dicas gerais e relevantes para o usuário." },
-                        nullable: true // Indica que este campo pode ser nulo ou ausente
+                            }
+                        },
+                        required: ["dayName", "meals"]
                     }
                 },
-                required: ["plan"]
-            }
+                tips: {
+                    type: "array",
+                    items: { type: "string" },
+                    nullable: true
+                }
+            },
+            required: ["plan"]
         }
-    });
-
-       const prompt = `Você é um nutricionista esportivo especializado em planos de alimentação.
-    Gere um plano alimentar semanal (7 dias) em Português do Brasil para um indivíduo com as seguintes características:
-    - Peso: ${weight} kg
-    - Altura: ${height} cm
-    - Idade: ${age} anos
-    - Gênero: ${gender}
-    - Nível de atividade: ${activityLevel}
-    - Objetivo: ${goal}
-    - Refeições por dia: ${mealsPerDay}
-    - Tipo de dieta: ${dietType}
-    - Restrições alimentares: ${restrictions || 'Nenhuma'}
-    - Calorias diárias estimadas para o objetivo: ${targetCalories} kcal.
-
-    O plano deve ter 7 dias (Segunda-feira a Domingo). Cada dia deve ter ${mealsPerDay} refeições.
-    Para cada refeição, liste os alimentos específicos com quantidades em gramas ou unidades.
-    **Para cada refeição, inclua no campo "icon" a CLASSE FONT AWESOME 6 FREE mais adequada para o tipo de refeição. Use APENAS UMA dessas classes:**
-    - "fas fa-coffee" para Café da Manhã
-    - "fas fa-apple-alt" para Lanche da Manhã/Tarde (frutas, snacks leves)
-    - "fas fa-utensils" para Almoço/Jantar (refeições principais com talheres)
-    - "fas fa-moon" para Ceia (refeição noturna)
-    - "fas fa-blender-phone" para Shakes/Vitaminas (se for o caso)
-    - "fas fa-egg" para Ovos (se for o foco da refeição)
-
-    **Se houver alguma dica nutricional geral muito importante para o usuário relacionada ao objetivo ou dieta, inclua um array de "tips" no final do JSON. Caso contrário, não inclua o campo "tips".**
-
-    Exemplo de formato para uma refeição (o formato completo está no schema JSON):
-    {
-      "mealName": "Café da Manhã",
-      "foods": [
-        "2 ovos mexidos",
-        "1 fatia de pão integral (50g)",
-        "1/2 abacate (100g)"
-      ],
-      "icon": "fas fa-coffee" // Exemplo de uso do ícone
     }
+});
 
-    Forneça descrições de alimentos realistas e acessíveis no Brasil. Não inclua informações nutricionais para os alimentos, apenas a descrição e quantidade.
-    `;
+const prompt = `
+    Você é um nutricionista esportivo. Gere um plano alimentar semanal (7 dias) em Português do Brasil para um indivíduo com as seguintes características:
+    - Peso: ${weight} kg, Altura: ${height} cm, Idade: ${age} anos, Gênero: ${gender}
+    - Nível de atividade: ${activityLevel}, Objetivo: ${goal}
+    - Refeições por dia: ${mealsPerDay}, Tipo de dieta: ${dietType}
+    - Restrições: ${restrictions || 'Nenhuma'}
+    - Calorias diárias alvo: ${targetCalories} kcal.
+
+    **REGRAS IMPORTANTES:**
+    1.  Para cada refeição, inclua no campo "icon" a classe Font Awesome 6 Free mais adequada.
+    2.  **Para cada refeição, adicione um objeto "macronutrients" com a estimativa de "protein", "carbohydrates" e "fats" em gramas (ex: "30g").**
+    3.  **Para cada refeição, adicione um campo "preparationTip" com uma dica de preparo ou receita curta e simples, se aplicável. Se não houver, pode ser uma string vazia.**
+    4.  Forneça alimentos realistas e acessíveis no Brasil.
+    5.  Se houver dicas gerais importantes, inclua no array "tips".
+`;
 
     console.log("Prompt enviado para Gemini API:", prompt);
 
