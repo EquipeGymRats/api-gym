@@ -361,5 +361,5 @@ app.get('/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, 
 
 
 app.listen(port, () => {
-    console.log(`Servidor rodando em http://localhost:${port}`);
+    console.log(`+ Servidor rodando em http://localhost:${port}`);
 });
