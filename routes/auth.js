@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User'); // Certifique-se de que o caminho está correto
 const authMiddleware = require('../middleware/auth'); // Importa o middleware de autenticação
-
+const { getLevelInfo } = require('../config/levels'); // <<< ADICIONE ESTA LINHA no topo
 
 
 // Rota de Registro
@@ -115,6 +115,8 @@ router.get('/profile', authMiddleware, async (req, res) => {
             id: user._id,
             username: user.username,
             email: user.email,
+            xp: user.xp,
+            levelInfo: getLevelInfo(user.xp)
             // Adicione outras informações do perfil aqui, se houver
         });
     } catch (error) {

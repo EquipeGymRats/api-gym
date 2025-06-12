@@ -3,7 +3,10 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth'); // Middleware de autenticação
 const Training = require('../models/Training'); // Importa o modelo de Treino
+const User = require('../models/User'); // <<< ADICIONE ESTA LINHA
+const WorkoutLog = require('../models/WorkoutLog'); // Importe o novo modelo
 const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@google/generative-ai');
+const mongoose = require('mongoose');
 
 // Configuração da Gemini API (se estiver faltando, adicione aqui)
 const API_KEY = process.env.GEMINI_API_KEY; // Certifique-se de que a API_KEY está definida como variável de ambiente
@@ -178,7 +181,7 @@ router.post('/generate-treino', authMiddleware, async (req, res) => {
             safetySettings,
             history: [],
         });
-
+        
         const result = await chat.sendMessage(prompt);
         let text = result.response.text();
 
@@ -214,5 +217,186 @@ router.post('/generate-treino', authMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Erro ao gerar plano de treino. Tente novamente mais tarde.' });
     }
 });
+
+// Rotas dashboard para treinos
+
+router.post('/complete-day', authMiddleware, async (req, res) => {
+    const { dayName } = req.body;
+    const userId = req.user.id;
+
+    if (!dayName) {
+        return res.status(400).json({ message: 'O nome do dia de treino é obrigatório.' });
+    }
+
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Zera o tempo para comparações de data
+
+        // 1. Garante que o log para este dia ainda não foi feito hoje
+        const existingLogToday = await WorkoutLog.findOne({
+            user: userId,
+            trainingDayName: dayName,
+            dateCompleted: { $gte: today }
+        });
+
+        if (existingLogToday) {
+            return res.status(409).json({ message: 'Este treino já foi concluído hoje.' });
+        }
+        
+        // Salva o novo log
+        const newLog = new WorkoutLog({ user: userId, trainingDayName: dayName });
+        await newLog.save();
+
+        // 2. Busca o plano de treino completo do usuário
+        const userTrainingPlan = await Training.findOne({ user: userId });
+        if (!userTrainingPlan || !userTrainingPlan.plan || userTrainingPlan.plan.length === 0) {
+            return res.status(201).json({ message: `Treino '${dayName}' concluído!`, allDone: false, weekCompleted: false });
+        }
+        
+        // Lógica de XP diário
+        const dayPlan = userTrainingPlan.plan.find(d => d.dayName === dayName);
+        const isRestDay = !dayPlan || !dayPlan.exercises || dayPlan.exercises.length === 0;
+        let dailyXp = isRestDay ? 0 : 10;
+
+        // 3. Lógica de Verificação Semanal
+        const totalWeeklyWorkouts = userTrainingPlan.plan.filter(d => d.exercises && d.exercises.length > 0).length;
+        
+        // Calcula o início (Segunda) e fim (Domingo) da semana atual
+        const firstDayOfWeek = new Date(today);
+        const dayIndex = today.getDay(); // 0-Dom, 1-Seg, ..., 6-Sáb
+        const diff = today.getDate() - dayIndex + (dayIndex === 0 ? -6 : 1); // Ajusta para segunda-feira
+        firstDayOfWeek.setDate(diff);
+        const lastDayOfWeek = new Date(firstDayOfWeek);
+        lastDayOfWeek.setDate(firstDayOfWeek.getDate() + 7);
+
+        // Conta quantos dias de treino *únicos* foram completados nesta semana
+        const completedThisWeekLogs = await WorkoutLog.distinct('trainingDayName', {
+            user: userId,
+            dateCompleted: { $gte: firstDayOfWeek, $lt: lastDayOfWeek }
+        });
+        
+        let weeklyBonusXp = 0;
+        let weekCompleted = false;
+
+        // 4. Verifica se a semana foi concluída
+        if (completedThisWeekLogs.length >= totalWeeklyWorkouts) {
+            weekCompleted = true;
+            weeklyBonusXp = 50; // Recompensa semanal
+        }
+
+        // 5. Atualiza o XP do usuário com o total
+        const totalXpGained = dailyXp + weeklyBonusXp;
+        const user = await User.findByIdAndUpdate(
+            userId,
+            { $inc: { xp: totalXpGained } },
+            { new: true }
+        );
+
+        // 6. Envia a resposta final para o frontend
+        res.status(200).json({
+            message: weekCompleted ? "Semana concluída com sucesso!" : `Treino '${dayName}' concluído!`,
+            allDone: !isRestDay, // Animação diária
+            weekCompleted: weekCompleted, // Animação semanal
+            newXp: user.xp,
+            gainedXp: totalXpGained
+        });
+
+    } catch (error) {
+        console.error('Erro ao marcar treino como concluído:', error);
+        res.status(500).json({ message: 'Erro no servidor ao salvar o progresso.' });
+    }
+});
+
+router.get('/logs', authMiddleware, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const logs = await WorkoutLog.find({ user: userId }).sort({ dateCompleted: -1 }); // Ordena do mais recente para o mais antigo
+        res.status(200).json(logs);
+    } catch (error) {
+        console.error('Erro ao buscar logs de treino:', error);
+        res.status(500).json({ message: 'Erro no servidor ao buscar histórico de treinos.' });
+    }
+});
+
+const getStartOfWeek = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Ajusta para segunda-feira
+    return new Date(d.setDate(diff));
+};
+
+// Rota principal para buscar todas as estatísticas de progresso
+router.get('/stats', authMiddleware, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // --- 1. Total de Treinos ---
+        const totalWorkouts = await WorkoutLog.countDocuments({ user: userId });
+
+        // --- 2. Sequência Atual (Streak) ---
+        const userLogs = await WorkoutLog.find({ user: userId }).sort({ dateCompleted: -1 });
+        let currentStreak = 0;
+        if (userLogs.length > 0) {
+            let lastDate = new Date();
+            // Verifica se o último treino foi hoje ou ontem para iniciar a contagem
+            const lastLogDate = new Date(userLogs[0].dateCompleted);
+            lastLogDate.setHours(0,0,0,0);
+
+            if (lastLogDate.getTime() === today.getTime() || lastLogDate.getTime() === today.getTime() - 86400000) {
+                currentStreak = 1;
+                lastDate = lastLogDate;
+
+                for (let i = 1; i < userLogs.length; i++) {
+                    const currentDate = new Date(userLogs[i].dateCompleted);
+                    currentDate.setHours(0,0,0,0);
+                    
+                    if (lastDate.getTime() - currentDate.getTime() === 86400000) { // Um dia de diferença
+                        currentStreak++;
+                        lastDate = currentDate;
+                    } else if (lastDate.getTime() - currentDate.getTime() > 86400000) {
+                        break; // Sequência quebrada
+                    }
+                }
+            }
+        }
+
+        // --- 3. Treinos por Semana (Últimas 6 semanas) ---
+        const sixWeeksAgo = getStartOfWeek(new Date());
+        sixWeeksAgo.setDate(sixWeeksAgo.getDate() - 35); // 5 semanas antes da atual
+
+        const weeklyData = await WorkoutLog.aggregate([
+            { $match: { user: new mongoose.Types.ObjectId(userId), dateCompleted: { $gte: sixWeeksAgo } } },
+            {
+                $group: {
+                    _id: { $dateToString: { format: "%Y-%U", date: "$dateCompleted", "timezone": "America/Sao_Paulo" } }, // Agrupa por ano e número da semana
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { "_id": 1 } }
+        ]);
+
+        // --- 4. Frequência por Tipo de Treino (Donut Chart) ---
+        const workoutFrequency = await WorkoutLog.aggregate([
+            { $match: { user: new mongoose.Types.ObjectId(userId) } },
+            { $group: { _id: "$trainingDayName", count: { $sum: 1 } } },
+            { $sort: { count: -1 } }
+        ]);
+
+        // Envia todos os dados compilados para o frontend
+        res.json({
+            totalWorkouts,
+            currentStreak,
+            weeklyData,
+            workoutFrequency
+        });
+
+    } catch (error) {
+        console.error("Erro ao buscar estatísticas de progresso:", error);
+        res.status(500).json({ message: "Erro ao buscar estatísticas." });
+    }
+});
+
 
 module.exports = router;
