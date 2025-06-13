@@ -2,7 +2,7 @@ const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@googl
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-app.use(cors());
+
 const connectDB = require('../config/db'); // Corrigido para 'db'
 const authMiddleware = require('../middleware/auth'); // Importa o middleware de autenticação
 const adminAuth = require('../middleware/admin'); // Importa o middleware de autenticação
@@ -18,6 +18,7 @@ const port = process.env.PORT || 3000;
 
 // Conecta ao banco de dados
 connectDB();
+app.use(cors());
 
 app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu projeto
 app.use(express.json());
@@ -27,6 +28,9 @@ app.use('/auth', authRoutes);
 app.use('/training', trainingRoutes);
 app.use('/posts', postRoutes);
 
+app.get('/connect', (req, res) => {
+  res.send('API Gym Rats está no ar!');
+});
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -373,3 +377,4 @@ app.get('/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, 
 app.listen(port, () => {
     console.log(`+ Servidor rodando em http://localhost:${port}`);
 });
+module.exports = app;
