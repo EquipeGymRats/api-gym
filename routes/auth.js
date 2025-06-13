@@ -67,6 +67,7 @@ router.post('/register', async (req, res) => {
 });
 
 // Rota de Login
+// this route now checks if the user is active before allowing login
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
