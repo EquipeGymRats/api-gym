@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
-const Post = require('../models/post');
+const Post = require('../models/Post');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 
