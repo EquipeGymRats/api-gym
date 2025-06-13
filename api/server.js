@@ -3,12 +3,13 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const connectDB = require('../config/db'); // Corrigido para 'db'
-const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
 const authMiddleware = require('../middleware/auth'); // Importa o middleware de autenticação
 const adminAuth = require('../middleware/admin'); // Importa o middleware de autenticação
-const trainingRoutes = require('../routes/training');
 const User = require('../models/User');
 const Training = require('../models/Training');
+const postRoutes = require('../routes/Posts'); // <<< ADICIONE ESTA LINHA
+const trainingRoutes = require('../routes/training');
+const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
 
 
 const app = express();
@@ -23,12 +24,9 @@ app.use(express.json());
 
 // Rotas de autenticação
 app.use('/auth', authRoutes);
-app.use('/training', trainingRoutes); // <-- ADICIONAR AQUI
-// Exemplo de rota protegida por autenticação
-app.get('/protected', authMiddleware, (req, res) => {
-  // req.user agora conterá { id, username, email } do MongoDB
-  res.json({ message: 'Você acessou uma rota protegida!', user: req.user });
-});
+app.use('/training', trainingRoutes);
+app.use('/posts', postRoutes);
+
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -145,21 +143,33 @@ app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
     }
 });
 
-const prompt = `
-    Você é um nutricionista esportivo. Gere um plano alimentar semanal (7 dias) em Português do Brasil para um indivíduo com as seguintes características:
-    - Peso: ${weight} kg, Altura: ${height} cm, Idade: ${age} anos, Gênero: ${gender}
-    - Nível de atividade: ${activityLevel}, Objetivo: ${goal}
-    - Refeições por dia: ${mealsPerDay}, Tipo de dieta: ${dietType}
-    - Restrições: ${restrictions || 'Nenhuma'}
-    - Calorias diárias alvo: ${targetCalories} kcal.
+    const prompt = `
+        Você é um Personal Trainer especialista em musculação e calistenia. Seu objetivo é criar um plano de treino semanal detalhado, focado em atingir os objetivos específicos do usuário, considerando seu nível de experiência, frequência e equipamento disponível.
 
-    **REGRAS IMPORTANTES:**
-    1.  Para cada refeição, inclua no campo "icon" a classe Font Awesome 6 Free mais adequada.
-    2.  **Para cada refeição, adicione um objeto "macronutrients" com a estimativa de "protein", "carbohydrates" e "fats" em gramas (ex: "30g").**
-    3.  **Para cada refeição, adicione um campo "preparationTip" com uma dica de preparo ou receita curta e simples, se aplicável. Se não houver, pode ser uma string vazia.**
-    4.  Forneça alimentos realistas e acessíveis no Brasil.
-    5.  Se houver dicas gerais importantes, inclua no array "tips".
-`;
+        O plano deve ser estruturado por dias da semana (Segunda a Domingo).
+        Para cada dia de treino, inclua 3-5 exercícios. Se um dia não tiver treino, deixe a lista de exercícios vazia.
+        Para cada exercício, forneça os seguintes detalhes em formato JSON:
+        - "name": Nome do exercício (string)
+        - "setsReps": Séries e repetições (ex: "3 séries de 8-12 repetições") (string)
+        - "tips": Dicas curtas de execução e segurança (string)
+        - "videoId": Um ID único para o vídeo (string, ex: "video_nome_exercicio")
+        - "youtubeUrl": Uma URL REAL e válida de um vídeo do YouTube em PORTUGUÊS que demonstre o exercício.
+        - "muscleGroups": Lista de grupos musculares principais (array de strings)
+        - "difficulty": Nível de dificuldade de 1 (Fácil) a 5 (Difícil) (número)
+        - "tutorialSteps": Passos detalhados para executar o exercício (array de strings)
+
+        Forneça uma propriedade "videosAvailable": true (booleano).
+        Inclua uma seção "recommendations" com 3 a 5 dicas gerais de treino e nutrição.
+
+        Detalhes do usuário:
+        - Nível: ${level}
+        - Objetivo: ${objective}
+        - Frequência: ${frequency}
+        - Equipamento: ${equipment}
+        - Tempo por Sessão: ${timePerSession} minutos
+
+        A resposta DEVE ser um único bloco de código JSON válido, completo e sem interrupções.
+    `;
 
     console.log("Prompt enviado para Gemini API:", prompt);
 

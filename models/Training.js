@@ -15,14 +15,6 @@ const ExerciseSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    videoId: {
-        type: String,
-        required: true
-    },
-    youtubeUrl: {
-        type: String,
-        required: true
-    },
     muscleGroups: {
         type: [String], // Array de strings
         required: true

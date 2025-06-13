@@ -17,18 +17,43 @@ const UserSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  role: { // Campo para definir se o usuário é 'user' ou 'admin'
+  role: {
     type: String,
     enum: ['user', 'admin'],
-    default: 'user', // Por padrão, um novo usuário é 'user'
+    default: 'user',
   },
-  isActive: { // Campo para ativar/desativar usuários
+  isActive: {
     type: Boolean,
-    default: true, // Por padrão, o usuário está ativo
+    default: true,
   },
-  xp: { // <<< NOVO CAMPO
+  xp: {
     type: Number,
     default: 0
+  },
+  // NOVOS CAMPOS PARA O PERFIL
+  profilePicture: { // URL da imagem de perfil
+    type: String,
+    default: 'https://www.svgrepo.com/show/452030/avatar-default.svg' // Substitua pela URL da sua imagem padrão
+  },
+  weight: { // Peso do usuário (em kg)
+    type: Number,
+    min: 1,
+    max: 500 // Limite razoável
+  },
+  height: { // Altura do usuário (em cm)
+    type: Number,
+    min: 50,
+    max: 300 // Limite razoável
+  },
+  mainObjective: { // Objetivo principal de treino
+    type: String,
+    enum: ['Ganho de Massa Muscular', 'Perda de Peso', 'Aumento de Força', 'Melhora de Resistência', 'Saúde e Bem-estar'],
+    default: 'Saúde e Bem-estar'
+  },
+  experienceLevel: { // Nível de experiência
+    type: String,
+    enum: ['Iniciante', 'Intermediário', 'Avançado'],
+    default: 'Iniciante'
   },
   createdAt: {
     type: Date,
@@ -46,7 +71,6 @@ UserSchema.pre('save', async function (next) {
   next();
 });
 
-// Método para comparar a senha
 UserSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
