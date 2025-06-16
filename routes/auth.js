@@ -53,7 +53,6 @@ router.post('/register', async (req, res) => {
         jwt.sign(
             payload,
             process.env.JWT_SECRET,
-            { expiresIn: '1h' },
             (err, token) => {
                 if (err) throw err;
                 res.status(201).json({ message: 'Usuário registrado com sucesso!', token });
@@ -103,7 +102,6 @@ router.post('/login', async (req, res) => {
         jwt.sign(
             payload,
             process.env.JWT_SECRET,
-            { expiresIn: '1h' },
             (err, token) => {
                 if (err) throw err;
                 res.json({ token });
