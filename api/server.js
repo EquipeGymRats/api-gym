@@ -9,12 +9,35 @@ const adminAuth = require('../middleware/admin'); // Importa o middleware de aut
 const User = require('../models/User');
 const Training = require('../models/Training');
 const postRoutes = require('../routes/Posts'); // <<< ADICIONE ESTA LINHA
+const rateLimit = require('express-rate-limit'); // <<< 1. IMPORTAR
 const trainingRoutes = require('../routes/training');
 const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
-
-
 const app = express();
 const port = process.env.PORT || 3000;
+
+app.set('trust proxy', 1);
+
+// Limitador geral para todas as requisições
+const globalLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 minutos
+	max: 200, // Limita cada IP a 200 requisições por janela (15 min)
+	standardHeaders: true, // Retorna informações do limite nos headers `RateLimit-*`
+	legacyHeaders: false, // Desabilita os headers `X-RateLimit-*` (legado)
+    message: { message: "Muitas requisições enviadas deste IP, por favor, tente novamente após 15 minutos." },
+});
+
+// Limitador mais estrito para rotas sensíveis (autenticação e IA)
+const sensitiveRoutesLimiter = rateLimit({
+	windowMs: 15 * 60 * 1000, // 15 minutos
+	max: 25, // Limita cada IP a 25 requisições por janela (15 min)
+    standardHeaders: true,
+	legacyHeaders: false,
+	message: { message: "Muitas tentativas de acesso a este recurso, por favor, tente novamente mais tarde." },
+});
+
+// Aplicar o limitador global a TODAS as rotas
+app.use(globalLimiter);
+
 
 // Conecta ao banco de dados
 connectDB();
@@ -24,11 +47,13 @@ app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu pro
 app.use(express.json());
 
 // Rotas de autenticação
-app.use('/auth', authRoutes);
+app.use('/auth', sensitiveRoutesLimiter, authRoutes); // <<< 3. APLICAR LIMITADOR SENSÍVEL
+
+// Demais rotas
 app.use('/training', trainingRoutes);
 app.use('/posts', postRoutes);
 
-app.get('/connect', (req, res) => {
+app.get('/connect', sensitiveRoutesLimiter, (req, res) => {
   res.send('API Gym Rats está no ar!');
 });
 
