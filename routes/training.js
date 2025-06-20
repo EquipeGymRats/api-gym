@@ -16,30 +16,40 @@ const model = genAI.getGenerativeModel({model: "gemini-1.5-flash" });
 
 router.get('/today', authMiddleware, async (req, res) => {
     try {
-        // 1. Busca o plano de treino do usuário logado
-        const trainingPlan = await Training.findOne({ user: req.user.id }).lean(); // .lean() para um objeto JS puro e mais rápido
+        const trainingPlan = await Training.findOne({ user: req.user.id }).lean();
 
         if (!trainingPlan || !trainingPlan.plan || trainingPlan.plan.length === 0) {
             return res.status(404).json({ message: 'Plano de treino não encontrado.' });
         }
 
-        // 2. Determina o nome do dia da semana atual em português (o mesmo padrão do seu frontend)
         const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
         const todayName = dayNames[new Date().getDay()];
 
-        // 3. Encontra o treino específico para hoje dentro do plano
         const todayWorkout = trainingPlan.plan.find(day => day.dayName.toLowerCase() === todayName);
         
-        // 4. Responde de forma inteligente
         if (todayWorkout && todayWorkout.exercises && todayWorkout.exercises.length > 0) {
-            // Se encontrou treino para hoje, retorna apenas esse objeto
-            // Adicionamos o objetivo geral para o frontend ter contexto
+            
+            // <<< MODIFICAÇÃO INÍCIO >>>
+            // Verifica se este treino específico já foi logado hoje.
+            const today = new Date();
+            today.setHours(0, 0, 0, 0); // Zera o tempo para comparar apenas a data
+
+            const log = await WorkoutLog.findOne({
+                user: req.user.id,
+                trainingDayName: todayWorkout.dayName,
+                dateCompleted: { $gte: today }
+            });
+
+            // Adiciona a flag 'isCompleted' ao objeto do treino
+            todayWorkout.isCompleted = !!log; // !!log converte o resultado (objeto ou null) para um booleano (true ou false)
+            // <<< MODIFICAÇÃO FIM >>>
+
             res.json({
                 objective: trainingPlan.objective,
-                workout: todayWorkout
+                workout: todayWorkout // O objeto de treino agora contém o status de conclusão
             });
+
         } else {
-            // Se não encontrou ou é dia de descanso (sem exercícios)
             res.json({ 
                 isRestDay: true,
                 message: 'Hoje é seu dia de descanso. Aproveite para recarregar!' 

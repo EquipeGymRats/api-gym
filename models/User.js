@@ -38,7 +38,10 @@ const UserSchema = new mongoose.Schema({
   // NOVOS CAMPOS PARA O PERFIL
   profilePicture: { // URL da imagem de perfil
     type: String,
-    default: 'https://www.svgrepo.com/show/452030/avatar-default.svg' // Substitua pela URL da sua imagem padrão
+      default: function() {
+        const initial = this.username ? this.username.charAt(0).toUpperCase() : 'A';
+        return `https://placehold.co/100x100/1E1E1E/ffd75d?text=${initial}`;
+      }
   },
   weight: { // Peso do usuário (em kg)
     type: Number,
