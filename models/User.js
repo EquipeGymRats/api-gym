@@ -13,9 +13,14 @@ const UserSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
+  googleId: { // Novo campo para o ID único do Google
+    type: String,
+    sparse: true, // Permite valores nulos e únicos
+    unique: true
+  },  
   password: {
     type: String,
-    required: true,
+    required: function() { return !this.googleId; } // Senha é obrigatória apenas se não for um login Google
   },
   role: {
     type: String,

@@ -13,6 +13,44 @@ const API_KEY = process.env.GEMINI_API_KEY; // Certifique-se de que a API_KEY es
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({model: "gemini-1.5-flash" });
 
+router.get('/today', authMiddleware, async (req, res) => {
+    try {
+        // 1. Busca o plano de treino do usuário logado
+        const trainingPlan = await Training.findOne({ user: req.user.id }).lean(); // .lean() para um objeto JS puro e mais rápido
+
+        if (!trainingPlan || !trainingPlan.plan || trainingPlan.plan.length === 0) {
+            return res.status(404).json({ message: 'Plano de treino não encontrado.' });
+        }
+
+        // 2. Determina o nome do dia da semana atual em português (o mesmo padrão do seu frontend)
+        const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+        const todayName = dayNames[new Date().getDay()];
+
+        // 3. Encontra o treino específico para hoje dentro do plano
+        const todayWorkout = trainingPlan.plan.find(day => day.dayName.toLowerCase() === todayName);
+        
+        // 4. Responde de forma inteligente
+        if (todayWorkout && todayWorkout.exercises && todayWorkout.exercises.length > 0) {
+            // Se encontrou treino para hoje, retorna apenas esse objeto
+            // Adicionamos o objetivo geral para o frontend ter contexto
+            res.json({
+                objective: trainingPlan.objective,
+                workout: todayWorkout
+            });
+        } else {
+            // Se não encontrou ou é dia de descanso (sem exercícios)
+            res.json({ 
+                isRestDay: true,
+                message: 'Hoje é seu dia de descanso. Aproveite para recarregar!' 
+            });
+        }
+
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).send('Erro no Servidor');
+    }
+});
+
 // Rota para salvar ou atualizar o treino
 router.post('/', authMiddleware, async (req, res) => {
     // DESESTRUTURAR TUDO QUE PODE VIR DO BODY
@@ -130,8 +168,6 @@ router.post('/generate-treino', authMiddleware, async (req, res) => {
         - "muscleGroups": Um array com os principais músculos trabalhados.
         - "difficulty": Um número de 1 a 5 para a dificuldade.
         - "tutorialSteps": Um array com 3 ou 4 passos simples para realizar o exercício.
-
-        NÃO inclua o campo 'youtubeUrl'.
 
         Detalhes do usuário:
         - Nível: ${level}

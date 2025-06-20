@@ -8,6 +8,8 @@ const authMiddleware = require('../middleware/auth'); // Importa o middleware de
 const { getLevelInfo } = require('../config/levels'); // <<< ADICIONE ESTA LINHA no topo
 const multer = require('multer'); // Para lidar com upload de arquivos
 const cloudinary = require('cloudinary').v2; // Para upload de imagen
+const { OAuth2Client } = require('google-auth-library');
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -19,6 +21,68 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
 // Configuração do Multer para upload em memória
+
+router.post('/google-signin', async (req, res) => {
+    const { token } = req.body;
+    try {
+        // 1. Verifica o token recebido do frontend com o Google
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const { name, email, sub: googleId, picture } = ticket.getPayload();
+
+        // 2. Procura se o usuário já existe na nossa base de dados
+        let user = await User.findOne({ googleId: googleId });
+
+        if (!user) {
+            // 2a. Se não existir, verifica se existe um usuário com o mesmo email (conta local)
+            user = await User.findOne({ email: email });
+
+            if (user) {
+                // Se o e-mail já existe (conta local), vincula a conta Google
+                user.googleId = googleId;
+                user.profilePicture = user.profilePicture || picture; // Atualiza a foto se não houver uma
+                await user.save();
+            } else {
+                // 2b. Se não existe de forma alguma, cria um novo usuário
+                user = new User({
+                    googleId,
+                    username: name,
+                    email,
+                    profilePicture: picture,
+                    // A senha não é necessária, pois a validação do schema foi ajustada
+                });
+                await user.save();
+            }
+        }
+
+        // 3. Cria o JWT da nossa aplicação para o usuário
+        const payload = {
+            user: {
+                id: user.id,
+                username: user.username,
+                role: user.role,
+            },
+        };
+
+        jwt.sign(
+            payload,
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' },
+            (err, appToken) => {
+                if (err) throw err;
+                // 4. Envia nosso token para o frontend
+                res.json({ token: appToken });
+            }
+        );
+
+    } catch (error) {
+        console.error('Erro na autenticação com Google:', error);
+        res.status(401).json({ message: 'Falha na autenticação com Google. Token inválido.' });
+    }
+});
+
 
 
 // Rota de Registro
