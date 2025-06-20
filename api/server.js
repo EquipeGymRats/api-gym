@@ -12,7 +12,7 @@ const postRoutes = require('../routes/Posts'); // <<< ADICIONE ESTA LINHA
 const rateLimit = require('express-rate-limit'); // <<< 1. IMPORTAR
 const trainingRoutes = require('../routes/training');
 const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
-const app = express();
+// const app = express();
 const port = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
