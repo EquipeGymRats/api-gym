@@ -7,6 +7,7 @@ const User = require('../models/User'); // <<< ADICIONE ESTA LINHA
 const WorkoutLog = require('../models/WorkoutLog'); // Importe o novo modelo
 const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@google/generative-ai');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 // Configuração da Gemini API (se estiver faltando, adicione aqui)
 const API_KEY = process.env.GEMINI_API_KEY; // Certifique-se de que a API_KEY está definida como variável de ambiente
@@ -51,53 +52,58 @@ router.get('/today', authMiddleware, async (req, res) => {
     }
 });
 
-// Rota para salvar ou atualizar o treino
 router.post('/', authMiddleware, async (req, res) => {
-    // DESESTRUTURAR TUDO QUE PODE VIR DO BODY
-    const { level, objective, frequency, equipment, timePerSession, plan, recommendations } = req.body;
-    const userId = req.user.id; // ID do usuário autenticado
+    // Agora recebemos a assinatura do frontend
+    const { level, objective, frequency, equipment, timePerSession, plan, recommendations, signature } = req.body;
+    const userId = req.user.id;
 
-    try {
-        let training = await Training.findOne({ user: userId });
+    // <<< 4. VERIFICAR A INTEGRIDADE ANTES DE SALVAR
+    if (!signature) {
+        return res.status(400).json({ error: 'Assinatura de integridade ausente.' });
+    }
 
-        if (training) {
-            // Atualiza o treino existente
-            training.level = level;
-            training.objective = objective;
-            training.frequency = frequency;
-            training.equipment = equipment;
-            training.timePerSession = timePerSession;
-            training.plan = plan; // O plan agora está tipado no schema e será salvo corretamente
-            training.recommendations = recommendations; // SALVANDO AS RECOMENDAÇÕES AQUI
-            training.dateGenerated = new Date();
-        } else {
-            // Cria um novo treino
-            training = new Training({
-                user: userId,
-                level,
-                objective,
-                frequency,
-                equipment,
-                timePerSession,
-                plan,
-                recommendations, // CRIANDO E SALVANDO AS RECOMENDAÇÕES AQUI
-                dateGenerated: new Date()
-            });
+    const planString = JSON.stringify(plan);
+    const expectedSignature = crypto
+        .createHmac('sha256', process.env.INTEGRITY_SECRET)
+        .update(planString)
+        .digest('hex');
+
+    if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+        // Assinaturas correspondem, o processo continua...
+        try {
+            let training = await Training.findOne({ user: userId });
+            if (training) {
+                // Atualiza o treino existente
+                training.level = level;
+                training.objective = objective;
+                training.frequency = frequency;
+                training.equipment = equipment;
+                training.timePerSession = timePerSession;
+                training.plan = plan;
+                training.recommendations = recommendations;
+                training.dateGenerated = new Date();
+            } else {
+                // Cria um novo treino
+                training = new Training({
+                    user: userId, level, objective, frequency, equipment, timePerSession, plan, recommendations,
+                    dateGenerated: new Date()
+                });
+            }
+            await training.save();
+            res.status(200).json({ message: 'Treino salvo com sucesso!', training });
+        } catch (error) {
+            console.error('Erro ao salvar ou atualizar treino:', error);
+            if (error.name === 'ValidationError') {
+                const errors = Object.keys(error.errors).map(key => error.errors[key].message);
+                return res.status(400).json({ error: 'Erro de validação ao salvar treino.', details: errors });
+            }
+            res.status(500).json({ error: 'Erro ao salvar ou atualizar treino. Tente novamente mais tarde.' });
         }
-
-        await training.save();
-        res.status(200).json({ message: 'Treino salvo com sucesso!', training });
-    } catch (error) {
-        console.error('Erro ao salvar ou atualizar treino:', error);
-        // Adicionar detalhes do erro para depuração
-        if (error.name === 'ValidationError') {
-            const errors = Object.keys(error.errors).map(key => error.errors[key].message);
-            return res.status(400).json({ error: 'Erro de validação ao salvar treino.', details: errors });
-        }
-        res.status(500).json({ error: 'Erro ao salvar ou atualizar treino. Tente novamente mais tarde.' });
+    } else {
+        // Assinaturas NÃO correspondem! Rejeita a requisição.
+        return res.status(403).json({ error: 'Falha na verificação de integridade. O plano de treino pode ter sido modificado.' });
     }
 });
-
 // Rota para carregar o treino salvo do usuário
 router.get('/', authMiddleware, async (req, res) => {
     const userId = req.user.id; // ID do usuário autenticado
@@ -183,10 +189,19 @@ router.post('/generate-treino', authMiddleware, async (req, res) => {
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const parsedData = JSON.parse(response.text());
-        
+
+        // <<< 2. GERAR A ASSINATURA AQUI
+        // É crucial assinar o objeto exato que será salvo (o 'plan')
+        const planString = JSON.stringify(parsedData.plan);
+        const signature = crypto
+            .createHmac('sha256', process.env.INTEGRITY_SECRET)
+            .update(planString)
+            .digest('hex');
+
         const finalResponse = {
             level, objective, frequency, equipment, timePerSession,
-            ...parsedData
+            ...parsedData,
+            signature // <<< 3. ENVIAR A ASSINATURA PARA O FRONTEND
         };
 
         res.json(finalResponse);

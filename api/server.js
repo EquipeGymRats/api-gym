@@ -12,7 +12,12 @@ const postRoutes = require('../routes/Posts'); // <<< ADICIONE ESTA LINHA
 const rateLimit = require('express-rate-limit'); // <<< 1. IMPORTAR
 const trainingRoutes = require('../routes/training');
 const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
-// const app = express();
+const nutritionRoutes = require('../routes/nutrition'); // <<< ADICIONE ESTA LINHA
+const crypto = require('crypto'); // <<< ADICIONAR ESTA LINHA
+
+
+
+const app = express();
 const port = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
@@ -20,7 +25,7 @@ app.set('trust proxy', 1);
 // Limitador geral para todas as requisições
 const globalLimiter = rateLimit({
 	windowMs: 15 * 60 * 1000, // 15 minutos
-	max: 200, // Limita cada IP a 200 requisições por janela (15 min)
+	max: 100, // Limita cada IP a 100 requisições por janela (15 min)
 	standardHeaders: true, // Retorna informações do limite nos headers `RateLimit-*`
 	legacyHeaders: false, // Desabilita os headers `X-RateLimit-*` (legado)
     message: { message: "Muitas requisições enviadas deste IP, por favor, tente novamente após 15 minutos." },
@@ -38,7 +43,6 @@ const sensitiveRoutesLimiter = rateLimit({
 // Aplicar o limitador global a TODAS as rotas
 app.use(globalLimiter);
 
-
 // Conecta ao banco de dados
 connectDB();
 app.use(cors());
@@ -47,20 +51,23 @@ app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu pro
 app.use(express.json());
 
 // Rotas de autenticação
-app.use('/auth', sensitiveRoutesLimiter, authRoutes); // <<< 3. APLICAR LIMITADOR SENSÍVEL
-
-// Demais rotas
+app.use('/auth', sensitiveRoutesLimiter, authRoutes);
 app.use('/training', trainingRoutes);
 app.use('/posts', postRoutes);
+app.use('/nutrition', nutritionRoutes); // <<< ADICIONE ESTA LINHA
 
-app.get('/connect', sensitiveRoutesLimiter, (req, res) => {
+app.get('/connect', (req, res) => {
   res.send('API Gym Rats está no ar!');
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
-    const { weight, height, age, gender, activityLevel, goal, mealsPerDay, dietType, restrictions } = req.body;
+     const { weight, height, age, gender, activityLevel, goal, mealsPerDay, dietType, restrictions } = req.body;
+
+    // <<< CORREÇÃO >>>
+    // Agrupamos os dados recebidos em um único objeto para uso posterior.
+    const userInputs = { weight, height, age, gender, activityLevel, goal, mealsPerDay, dietType, restrictions };
 
     // --- Cálculo de Calorias no Backend (para passar à IA) ---
     const calculateBMR = (w, h, a, g) => {
@@ -172,32 +179,29 @@ app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
     }
 });
 
+    // CORREÇÃO: Prompt ajustado para gerar plano de nutrição com as variáveis corretas.
     const prompt = `
-        Você é um Personal Trainer especialista em musculação e calistenia. Seu objetivo é criar um plano de treino semanal detalhado, focado em atingir os objetivos específicos do usuário, considerando seu nível de experiência, frequência e equipamento disponível.
+        Você é um Nutricionista Esportivo especialista. Crie um plano alimentar semanal em JSON.
 
-        O plano deve ser estruturado por dias da semana (Segunda a Domingo).
-        Para cada dia de treino, inclua 3-5 exercícios. Se um dia não tiver treino, deixe a lista de exercícios vazia.
-        Para cada exercício, forneça os seguintes detalhes em formato JSON:
-        - "name": Nome do exercício (string)
-        - "setsReps": Séries e repetições (ex: "3 séries de 8-12 repetições") (string)
-        - "tips": Dicas curtas de execução e segurança (string)
-        - "videoId": Um ID único para o vídeo (string, ex: "video_nome_exercicio")
-        - "youtubeUrl": Uma URL REAL e válida de um vídeo do YouTube em PORTUGUÊS que demonstre o exercício.
-        - "muscleGroups": Lista de grupos musculares principais (array de strings)
-        - "difficulty": Nível de dificuldade de 1 (Fácil) a 5 (Difícil) (número)
-        - "tutorialSteps": Passos detalhados para executar o exercício (array de strings)
+        O plano deve ser estruturado em 7 dias (Segunda-feira a Domingo).
+        Para cada dia, crie ${mealsPerDay} refeições.
+        Para cada refeição, forneça OBRIGATORIAMENTE os seguintes campos:
+        - "mealName": Nome da refeição (ex: "Café da Manhã", "Almoço").
+        - "foods": Um array de strings com sugestões de alimentos e quantidades aproximadas (ex: "100g de frango grelhado", "150g de batata doce").
+        - "icon": Uma classe de ícone do Font Awesome 6 Free (ex: "fas fa-coffee").
+        - "macronutrients": Um objeto com a estimativa de "protein", "carbohydrates", e "fats" em gramas (ex: { "protein": "30g", "carbohydrates": "50g", "fats": "15g" }).
+        - "preparationTip": (Opcional) Uma dica curta de preparo para a refeição.
 
-        Forneça uma propriedade "videosAvailable": true (booleano).
-        Inclua uma seção "recommendations" com 3 a 5 dicas gerais de treino e nutrição.
+        O plano deve ser balanceado para atingir o objetivo do usuário.
+        Adicionalmente, forneça uma propriedade "tips" no JSON principal, contendo um array com 3 a 5 dicas gerais de nutrição e hidratação.
 
-        Detalhes do usuário:
-        - Nível: ${level}
-        - Objetivo: ${objective}
-        - Frequência: ${frequency}
-        - Equipamento: ${equipment}
-        - Tempo por Sessão: ${timePerSession} minutos
+        Detalhes do usuário e da dieta:
+        - Objetivo Calórico Diário: Aproximadamente ${targetCalories} kcal.
+        - Meta Principal: ${goal}.
+        - Preferência de Dieta: ${dietType}.
+        - Restrições Alimentares: ${restrictions || 'Nenhuma'}.
 
-        A resposta DEVE ser um único bloco de código JSON válido, completo e sem interrupções.
+        A resposta DEVE ser um único bloco de código JSON válido, completo e sem interrupções, seguindo o schema definido.
     `;
 
     console.log("Prompt enviado para Gemini API:", prompt);
@@ -210,29 +214,51 @@ app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {
         let parsedData;
         try {
             parsedData = JSON.parse(jsonResponse);
-            console.log("JSON PARSEADO COM SUCESSO DA GEMINI:", parsedData);
         } catch (jsonError) {
-            console.error("Erro ao fazer parse do JSON retornado pela Gemini:", jsonError);
-            console.error("Texto da resposta que tentou parsear:", jsonResponse);
-            return res.status(500).json({ error: "A IA gerou uma resposta, mas não foi possível fazer parse do JSON válido." });
-        }
-
-        if (!parsedData || !Array.isArray(parsedData.plan)) {
-            throw new Error("A resposta da IA não contém um array 'plan' válido no formato esperado.");
-        }
-
-        const dayNames = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"];
-        if (parsedData.plan.length < 7) {
-            console.warn(`A Gemini gerou ${parsedData.plan.length} dias, esperava 7. Completando os dias restantes.`);
-            for (let i = parsedData.plan.length; i < 7; i++) {
-                parsedData.plan.push({
-                    dayName: dayNames[i],
-                    meals: [{ mealName: "Plano Indisponível", foods: ["Tente gerar novamente para este dia."], icon: "fas fa-exclamation-triangle" }]
-                });
+            console.error("Erro de parse do JSON da Gemini API:", jsonError);
+            const cleanedJson = jsonResponse.replace(/```json|```/g, '').trim();
+            try {
+                parsedData = JSON.parse(cleanedJson);
+            } catch (secondJsonError) {
+                console.error("Segunda tentativa de parse do JSON falhou:", secondJsonError);
+                return res.status(500).json({ error: 'A resposta da IA não é um JSON válido, mesmo após limpeza.' });
             }
         }
 
-        res.json(parsedData);
+            if (parsedData.plan && Array.isArray(parsedData.plan)) {
+            parsedData.plan.forEach(day => {
+                if (day.meals && Array.isArray(day.meals)) {
+                    day.meals.forEach(meal => {
+                        // Garante que o objeto macronutrients exista
+                        if (!meal.macronutrients) {
+                            meal.macronutrients = {};
+                        }
+                        // Define valores padrão para os campos obrigatórios se estiverem faltando
+                        meal.macronutrients.protein = meal.macronutrients.protein || '0g';
+                        meal.macronutrients.carbohydrates = meal.macronutrients.carbohydrates || '0g';
+                        meal.macronutrients.fats = meal.macronutrients.fats || '0g';
+                    });
+                }
+            });
+        }
+
+        if (!parsedData || !Array.isArray(parsedData.plan)) {
+            throw new Error("A resposta da IA não contém um array 'plan' válido.");
+        }
+
+        const planString = JSON.stringify(parsedData.plan);
+        const signature = crypto
+            .createHmac('sha256', process.env.INTEGRITY_SECRET)
+            .update(planString)
+            .digest('hex');
+
+        const finalResponse = {
+            userInputs,
+            ...parsedData,
+            signature
+        };
+
+        res.json(finalResponse);
 
     } catch (error) {
         console.error('Erro ao gerar conteúdo na Gemini API:', error);
@@ -402,4 +428,32 @@ app.get('/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, 
 app.listen(port, () => {
     console.log(`+ Servidor rodando em http://localhost:${port}`);
 });
+
+app.get("/users/:id", authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id).select("-password");
+        if (!user) {
+            return res.status(404).json({ message: "Usuário não encontrado." });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error("Erro ao buscar usuário por ID:", error);
+        res.status(500).json({ message: "Erro interno do servidor." });
+    }
+});
+
 module.exports = app;
+
+// NOVA ROTA: Obter perfil de usuário por ID (para exibição no modal)
+app.get("/users/:id/profile", authMiddleware, async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id).select("-password");
+        if (!user) {
+            return res.status(404).json({ message: "Usuário não encontrado." });
+        }
+        res.json(user);
+    } catch (error) {
+        console.error("Erro ao buscar usuário por ID:", error);
+        res.status(500).json({ message: "Erro interno do servidor." });
+    }
+});

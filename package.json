@@ -10,12 +10,14 @@
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.6.1",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",
     "google-auth-library": "^10.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.4.1",
-    "multer": "^2.0.1"
+    "multer": "^2.0.1",
+    "sanitize-html": "^2.17.0"
   }
 }
