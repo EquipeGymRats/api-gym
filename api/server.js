@@ -14,12 +14,15 @@ const trainingRoutes = require('../routes/training');
 const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
 const nutritionRoutes = require('../routes/nutrition'); // <<< ADICIONE ESTA LINHA
 const crypto = require('crypto'); // <<< ADICIONAR ESTA LINHA
+const reminderRoutes = require('../routes/reminders'); // <<< ADICIONE ESTA LINHA
+const pushRoutes = require('../routes/push');
+const { initializeScheduler } = require('../services/notificationScheduler');
 
-
-
+// Configuração do Express
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Configuração do rate limiting
 app.set('trust proxy', 1);
 
 // Limitador geral para todas as requisições
@@ -39,8 +42,6 @@ const sensitiveRoutesLimiter = rateLimit({
 	legacyHeaders: false,
 	message: { message: "Muitas tentativas de acesso a este recurso, por favor, tente novamente mais tarde." },
 });
-
-// Aplicar o limitador global a TODAS as rotas
 app.use(globalLimiter);
 
 // Conecta ao banco de dados
@@ -51,10 +52,12 @@ app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu pro
 app.use(express.json());
 
 // Rotas de autenticação
+app.use('/reminders', authMiddleware, reminderRoutes);
 app.use('/auth', sensitiveRoutesLimiter, authRoutes);
 app.use('/training', trainingRoutes);
 app.use('/posts', postRoutes);
 app.use('/nutrition', nutritionRoutes); // <<< ADICIONE ESTA LINHA
+app.use('/push', authMiddleware, pushRoutes); // <<< ADICIONE ESTA LINHA
 
 app.get('/connect', (req, res) => {
   res.send('API Gym Rats está no ar!');
@@ -424,6 +427,7 @@ app.get('/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, 
     }
 });
 
+initializeScheduler(); // <<< ADICIONE ESTA LINHA
 
 app.listen(port, () => {
     console.log(`+ Servidor rodando em http://localhost:${port}`);

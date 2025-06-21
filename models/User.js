@@ -67,6 +67,9 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  pushSubscription: {
+      type: Object // Armazenará o objeto de inscrição vindo do navegador
+  }
 });
 
 // Middleware Mongoose para hash da senha antes de salvar
