@@ -116,16 +116,40 @@ router.post('/', authMiddleware, async (req, res) => {
 });
 // Rota para carregar o treino salvo do usuário
 router.get('/', authMiddleware, async (req, res) => {
-    const userId = req.user.id; // ID do usuário autenticado
+    const userId = req.user.id;
 
     try {
-        const training = await Training.findOne({ user: userId });
+        const training = await Training.findOne({ user: userId }).lean(); // Usamos .lean() para obter um objeto JS puro
 
-        if (training) {
-            res.status(200).json(training); // Retorna o objeto de treino completo
-        } else {
-            res.status(404).json({ message: 'Nenhum treino salvo encontrado para este usuário.' });
+        if (!training) {
+            return res.status(404).json({ message: 'Nenhum treino salvo encontrado para este usuário.' });
         }
+
+        // <<< INÍCIO DA CORREÇÃO >>>
+        // Busca todos os logs de treino do usuário para verificação
+        const logs = await WorkoutLog.find({ user: userId });
+        const completedTodaySet = new Set();
+        
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Cria um conjunto de treinos concluídos HOJE para fácil consulta
+        logs.forEach(log => {
+            const logDate = new Date(log.dateCompleted);
+            logDate.setHours(0, 0, 0, 0);
+            if (logDate.getTime() === today.getTime()) {
+                completedTodaySet.add(log.trainingDayName);
+            }
+        });
+
+        // Itera sobre cada dia do plano e adiciona a flag 'isCompleted'
+        training.plan.forEach(day => {
+            day.isCompleted = completedTodaySet.has(day.dayName);
+        });
+        // <<< FIM DA CORREÇÃO >>>
+
+        res.status(200).json(training); // Retorna o objeto de treino completo e MODIFICADO
+
     } catch (error) {
         console.error('Erro ao carregar treino:', error);
         res.status(500).json({ error: 'Erro ao carregar treino. Tente novamente mais tarde.' });
@@ -312,6 +336,8 @@ router.post('/complete-day', authMiddleware, async (req, res) => {
         res.status(500).json({ message: 'Erro no servidor ao salvar o progresso.' });
     }
 });
+
+
 
 router.get('/logs', authMiddleware, async (req, res) => {
     try {
