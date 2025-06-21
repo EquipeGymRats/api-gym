@@ -7,6 +7,7 @@ const Post = require('../models/Post');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const sanitizeHtml = require('sanitize-html');
+const adminAuth = require('../middleware/admin'); // Certifique-se que o middleware de admin está importado
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
@@ -14,12 +15,28 @@ const upload = multer({ storage: storage });
 // Rota para buscar todos os posts do feed (mais recentes primeiro)
 router.get('/', authMiddleware, async (req, res) => {
     try {
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 5;
+        const skip = (page - 1) * limit;
+
+        const totalPosts = await Post.countDocuments();
+
         const posts = await Post.find()
             .sort({ createdAt: -1 })
-            .populate('user', 'username profilePicture');
+            .skip(skip)
+            .limit(limit)
+            // <<< MUDANÇA AQUI: Adicionado 'role' ao populate >>>
+            .populate('user', 'username profilePicture role')
+            .lean();
+        
+        res.json({
+            posts,
+            totalPages: Math.ceil(totalPosts / limit),
+            currentPage: page
+        });
 
-        res.json(posts);
     } catch (error) {
+        console.error('Erro ao buscar posts:', error);
         res.status(500).json({ message: 'Erro ao buscar posts.' });
     }
 });
@@ -64,6 +81,35 @@ router.post('/', authMiddleware, upload.single('postImage'), async (req, res) =>
     } catch (error) {
         console.error("Erro ao criar post:", error);
         res.status(500).json({ message: 'Erro ao criar post.' });
+    }
+});
+
+router.delete('/:id', authMiddleware, adminAuth, async (req, res) => {
+    try {
+        const post = await Post.findById(req.params.id);
+
+        if (!post) {
+            return res.status(404).json({ message: 'Post não encontrado.' });
+        }
+
+        // Se o post tiver uma imagem no Cloudinary, delete-a
+        if (post.imageUrl) {
+            // Extrai o public_id da URL da imagem
+            // Ex: "https://.../gymrats_feed_posts/public_id.webp" -> "gymrats_feed_posts/public_id"
+            const publicId = post.imageUrl.split('/').slice(-2).join('/').split('.')[0];
+            
+            await cloudinary.uploader.destroy(publicId);
+            console.log(`Imagem deletada do Cloudinary: ${publicId}`);
+        }
+
+        // Deleta o post do banco de dados
+        await Post.findByIdAndDelete(req.params.id);
+
+        res.json({ message: 'Post deletado com sucesso.' });
+
+    } catch (error) {
+        console.error('Erro ao deletar post:', error);
+        res.status(500).json({ message: 'Erro no servidor ao deletar o post.' });
     }
 });
 
