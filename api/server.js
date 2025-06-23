@@ -48,7 +48,7 @@ app.use(globalLimiter);
 connectDB();
 app.use(cors());
 
-app.use(express.static('public')); // Crie uma pasta 'public' na raiz do seu projeto
+app.use(express.static('public'));
 app.use(express.json());
 
 // Rotas de autenticação
@@ -56,8 +56,9 @@ app.use('/reminders', authMiddleware, reminderRoutes);
 app.use('/auth', sensitiveRoutesLimiter, authRoutes);
 app.use('/training', trainingRoutes);
 app.use('/posts', postRoutes);
-app.use('/nutrition', nutritionRoutes); // <<< ADICIONE ESTA LINHA
-app.use('/push', authMiddleware, pushRoutes); // <<< ADICIONE ESTA LINHA
+app.use('/nutrition', nutritionRoutes);
+app.use('/push', authMiddleware, pushRoutes);
+app.use('/user', require('../routes/user'));
 
 app.get('/connect', (req, res) => {
   res.send('API Gym Rats está no ar!');

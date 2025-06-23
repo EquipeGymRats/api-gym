@@ -9,6 +9,7 @@ const { getLevelInfo } = require('../config/levels'); // <<< ADICIONE ESTA LINHA
 const multer = require('multer'); // Para lidar com upload de arquivos
 const cloudinary = require('cloudinary').v2; // Para upload de imagen
 const { OAuth2Client } = require('google-auth-library');
+const sanitizeHtml = require('sanitize-html');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 cloudinary.config({
@@ -17,8 +18,39 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const allowedMimeTypes = [
+    'image/jpeg', 
+    'image/png', 
+    'image/webp', 
+    'image/gif',
+    'image/heic', // Formato de iPhones
+    'image/heif'  // Formato de iPhones
+];
+
+// Cria a configuração do Multer
+const upload = multer({
+    // 1. Armazenamento: usar memória é correto para o seu caso, 
+    // pois você envia o arquivo diretamente para o Cloudinary.
+    storage: multer.memoryStorage(),
+
+    // 2. Limites: define um limite de tamanho para evitar que arquivos muito grandes
+    // sobrecarreguem o servidor.
+    limits: {
+        fileSize: 10 * 1024 * 1024 // Limite de 10 Megabytes
+    },
+
+    // 3. Filtro de Arquivo: a lógica principal de validação.
+    fileFilter: (req, file, cb) => {
+        // Verifica se o MIME type do arquivo está na lista de tipos permitidos
+        if (allowedMimeTypes.includes(file.mimetype)) {
+            // Se estiver, permite o upload
+            cb(null, true);
+        } else {
+            // Se não estiver, rejeita o arquivo e envia uma mensagem de erro
+            cb(new Error('Tipo de arquivo não suportado! Apenas imagens são permitidas.'), false);
+        }
+    }
+});
 
 // Configuração do Multer para upload em memória
 
@@ -69,7 +101,6 @@ router.post('/google-signin', async (req, res) => {
         jwt.sign(
             payload,
             process.env.JWT_SECRET,
-            { expiresIn: '1h' },
             (err, appToken) => {
                 if (err) throw err;
                 // 4. Envia nosso token para o frontend
@@ -219,8 +250,31 @@ router.put('/profile', authMiddleware, upload.single('profilePicture'), async (r
             return res.status(404).json({ message: 'Usuário não encontrado.' });
         }
 
-        // Atualiza campos de texto
-        if (username) user.username = username;
+        // <<< INÍCIO DA MODIFICAÇÃO DE SEGURANÇA >>>
+        // Atualiza o nome de usuário com sanitização e validação
+        if (username) {
+            // 1. Remove qualquer tag HTML para prevenir XSS
+            const sanitizedUsername = sanitizeHtml(username, {
+                allowedTags: [],
+                allowedAttributes: {},
+            }).trim();
+            
+            // 2. ADICIONADO: Valida se o nome de usuário contém apenas letras e números (sem espaços)
+            const usernameRegex = /^[a-zA-Z0-9]+$/;
+            if (!usernameRegex.test(sanitizedUsername)) {
+                return res.status(400).json({ message: 'O nome de usuário pode conter apenas letras e números, sem espaços.' });
+            }
+
+            // 3. Valida o comprimento do nome de usuário
+            if (sanitizedUsername.length < 3 || sanitizedUsername.length > 25) {
+                return res.status(400).json({ message: 'O nome de usuário deve ter entre 3 e 25 caracteres.' });
+            }
+            user.username = sanitizedUsername;
+        }
+        // <<< FIM DA MODIFICAÇÃO DE SEGURANÇA >>>
+
+
+        // Atualiza outros campos
         if (weight) user.weight = parseFloat(weight);
         if (height) user.height = parseInt(height);
         if (mainObjective) user.mainObjective = mainObjective;
@@ -228,7 +282,6 @@ router.put('/profile', authMiddleware, upload.single('profilePicture'), async (r
 
         // Lidar com o upload da imagem de perfil para o Cloudinary
         if (req.file) {
-            // ---> MELHORIA: Converte o buffer para um Data URI, que é mais robusto <---
             const fileStr = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
             
             const result = await cloudinary.uploader.upload(fileStr, {
@@ -263,21 +316,16 @@ router.put('/profile', authMiddleware, upload.single('profilePicture'), async (r
         });
 
     } catch (error) {
-        // ---> MELHORIA: Tratamento de Erro Específico <---
-        console.error('Erro ao atualizar perfil:', error);
-
-        // Se for um erro de chave duplicada (ex: username já existe)
         if (error.code === 11000) {
             return res.status(400).json({ message: 'Este nome de usuário ou e-mail já está em uso.' });
         }
-        // Se for um erro de validação do Schema (ex: valor inválido para enum)
         if (error.name === 'ValidationError') {
             return res.status(400).json({ message: `Erro de validação: ${Object.values(error.errors).map(e => e.message).join(', ')}` });
         }
 
-        // Para todos os outros erros (incluindo falhas no Cloudinary)
         res.status(500).json({ message: 'Erro no Servidor ao atualizar perfil.' });
     }
 });
+
 
 module.exports = router;

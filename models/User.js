@@ -69,8 +69,17 @@ const UserSchema = new mongoose.Schema({
   },
   pushSubscription: {
       type: Object // Armazenará o objeto de inscrição vindo do navegador
-  }
+  },
+  following: [{ 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'User' 
+  }],
+  followers: [{ 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'User' 
+  }],
 });
+
 
 // Middleware Mongoose para hash da senha antes de salvar
 UserSchema.pre('save', async function (next) {
