@@ -17,6 +17,7 @@ const crypto = require('crypto'); // <<< ADICIONAR ESTA LINHA
 const reminderRoutes = require('../routes/reminders'); // <<< ADICIONE ESTA LINHA
 const pushRoutes = require('../routes/push');
 const { initializeScheduler } = require('../services/notificationScheduler');
+const achievementRoutes = require('../routes/achievements'); 
 
 // Configuração do Express
 const app = express();
@@ -59,6 +60,7 @@ app.use('/posts', postRoutes);
 app.use('/nutrition', nutritionRoutes);
 app.use('/push', authMiddleware, pushRoutes);
 app.use('/user', require('../routes/user'));
+app.use('/achievements', achievementRoutes);
 
 app.get('/connect', (req, res) => {
   res.send('API Gym Rats está no ar!');

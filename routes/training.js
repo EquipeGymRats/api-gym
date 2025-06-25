@@ -8,12 +8,38 @@ const WorkoutLog = require('../models/WorkoutLog'); // Importe o novo modelo
 const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@google/generative-ai');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const Achievement = require('../models/Achievement'); // Adicione este import
+
+// Função auxiliar para verificar e conceder conquistas
+
 
 // Configuração da Gemini API (se estiver faltando, adicione aqui)
 const API_KEY = process.env.GEMINI_API_KEY; // Certifique-se de que a API_KEY está definida como variável de ambiente
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({model: "gemini-1.5-flash" });
 
+async function checkAndAwardAchievements(userId) {
+    const user = await User.findById(userId).populate('unlockedAchievements.achievementId');
+    const allAchievements = await Achievement.find();
+
+    const unlockedIds = new Set(user.unlockedAchievements.map(ua => ua.achievementId._id.toString()));
+
+    for (const ach of allAchievements) {
+        if (!unlockedIds.has(ach._id.toString())) {
+            let unlock = false;
+            if (ach.criteria.type === 'level' && user.xp >= ach.criteria.value) {
+                unlock = true;
+            }
+            // Adicione aqui outras lógicas, como 'totalWorkouts' e 'streak'
+            // if (ach.criteria.type === 'totalWorkouts' && totalWorkouts >= ach.criteria.value) { ... }
+            
+            if (unlock) {
+                user.unlockedAchievements.push({ achievementId: ach._id });
+            }
+        }
+    }
+    await user.save();
+}
 router.get('/today', authMiddleware, async (req, res) => {
     try {
         const trainingPlan = await Training.findOne({ user: req.user.id }).lean();
@@ -272,6 +298,10 @@ router.post('/complete-day', authMiddleware, async (req, res) => {
         if (existingLogToday) {
             return res.status(409).json({ message: 'Este treino já foi concluído hoje.' });
         }
+
+        // --- VERIFICAÇÃO DE CONQUISTAS ---
+        await checkAndAwardAchievements(userId);
+        // ---------------------------------
         
         // Salva o novo log
         const newLog = new WorkoutLog({ user: userId, trainingDayName: dayName });

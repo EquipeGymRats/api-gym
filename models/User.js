@@ -1,98 +1,104 @@
-// models/User.js
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+// Schema para um único registro de progresso (peso ou medida)
+const ProgressEntrySchema = new mongoose.Schema({
+    date: {
+        type: Date,
+        default: Date.now
+    },
+    value: {
+        type: Number,
+        required: true
+    }
+}, { _id: false });
+
+// Schema para as conquistas desbloqueadas pelo usuário
+const UnlockedAchievementSchema = new mongoose.Schema({
+    achievementId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Achievement', // Referência ao novo modelo de Conquistas
+        required: true
+    },
+    date: {
+        type: Date,
+        default: Date.now
+    }
+}, { _id: false });
+
 const UserSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-  email: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-  googleId: { // Novo campo para o ID único do Google
-    type: String,
-    sparse: true, // Permite valores nulos e únicos
-    unique: true
-  },  
-  password: {
-    type: String,
-    required: function() { return !this.googleId; } // Senha é obrigatória apenas se não for um login Google
-  },
-  role: {
-    type: String,
-    enum: ['user', 'admin'],
-    default: 'user',
-  },
-  isActive: {
-    type: Boolean,
-    default: true,
-  },
-  xp: {
-    type: Number,
-    default: 0
-  },
-  // NOVOS CAMPOS PARA O PERFIL
-  profilePicture: { // URL da imagem de perfil
-    type: String,
-      default: function() {
-        const initial = this.username ? this.username.charAt(0).toUpperCase() : 'A';
-        return `https://placehold.co/100x100/1E1E1E/ffd75d?text=${initial}`;
-      }
-  },
-  weight: { // Peso do usuário (em kg)
-    type: Number,
-    min: 1,
-    max: 500 // Limite razoável
-  },
-  height: { // Altura do usuário (em cm)
-    type: Number,
-    min: 50,
-    max: 300 // Limite razoável
-  },
-  mainObjective: { // Objetivo principal de treino
-    type: String,
-    enum: ['Ganho de Massa Muscular', 'Perda de Peso', 'Aumento de Força', 'Melhora de Resistência', 'Saúde e Bem-estar'],
-    default: 'Saúde e Bem-estar'
-  },
-  experienceLevel: { // Nível de experiência
-    type: String,
-    enum: ['Iniciante', 'Intermediário', 'Avançado'],
-    default: 'Iniciante'
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  pushSubscription: {
-      type: Object // Armazenará o objeto de inscrição vindo do navegador
-  },
-  following: [{ 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'User' 
-  }],
-  followers: [{ 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'User' 
-  }],
+    username: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true
+    },
+    email: {
+        type: String,
+        required: true,
+        unique: true,
+        trim: true
+    },
+    password: {
+        type: String,
+        // Senha não é obrigatória para permitir login com Google
+    },
+    googleId: {
+        type: String,
+        unique: true,
+        sparse: true // Permite múltiplos documentos nulos, mas valores únicos se existirem
+    },
+    role: {
+        type: String,
+        enum: ['user', 'admin', 'vip'],
+        default: 'user'
+    },
+    profilePicture: {
+        type: String,
+        default: 'https://res.cloudinary.com/gymrats/image/upload/v1716339538/default_avatar.png'
+    },
+    xp: {
+        type: Number,
+        default: 0
+    },
+    isActive: {
+        type: Boolean,
+        default: true
+    },
+    // --- CAMPOS DE PROGRESSÃO ADICIONADOS ---
+    mainObjective: String,
+    experienceLevel: String,
+    progress: {
+        weight: [ProgressEntrySchema], // Histórico de peso
+        measurements: {
+            biceps: [ProgressEntrySchema],
+            chest: [ProgressEntrySchema],
+            waist: [ProgressEntrySchema],
+            hips: [ProgressEntrySchema],
+            thighs: [ProgressEntrySchema] // Coxas
+        }
+    },
+    unlockedAchievements: [UnlockedAchievementSchema], // Histórico de conquistas
+    // -----------------------------------------
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
 });
 
-
-// Middleware Mongoose para hash da senha antes de salvar
-UserSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
+// Hook para criptografar a senha antes de salvar
+UserSchema.pre('save', async function(next) {
+    if (!this.isModified('password') || !this.password) {
+        return next();
+    }
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
     next();
-  }
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
 });
 
-UserSchema.methods.comparePassword = async function (candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
+// Método para comparar senhas
+UserSchema.methods.comparePassword = function(candidatePassword) {
+    return bcrypt.compare(candidatePassword, this.password);
 };
 
-module.exports = mongoose.models.User || mongoose.model('User', UserSchema);
+module.exports = mongoose.model('User', UserSchema);
