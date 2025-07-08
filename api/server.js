@@ -66,6 +66,11 @@ app.get('/connect', (req, res) => {
   res.send('API Gym Rats está no ar!');
 });
 
+app.get('/ping', (req, res) => {
+    // ALTERAÇÃO: Use .json() para enviar uma resposta JSON válida.
+    res.status(200).json({ status: 'ok', message: 'Pong' });
+});
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.post('/generate-nutrition-plan', authMiddleware, async (req, res) => {

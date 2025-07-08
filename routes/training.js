@@ -40,42 +40,54 @@ async function checkAndAwardAchievements(userId) {
     }
     await user.save();
 }
+
 router.get('/today', authMiddleware, async (req, res) => {
     try {
-        const trainingPlan = await Training.findOne({ user: req.user.id }).lean();
-
-        if (!trainingPlan || !trainingPlan.plan || trainingPlan.plan.length === 0) {
-            return res.status(404).json({ message: 'Plano de treino não encontrado.' });
+        // 1. Encontra o usuário para obter o ID do treino ativo
+        const user = await User.findById(req.user.id);
+        if (!user || !user.currentTrainingId) {
+            return res.status(404).json({ message: 'Plano de treino ativo não encontrado.' });
         }
 
+        // 2. Busca o plano de treino ativo usando o ID armazenado no usuário
+        const trainingPlan = await Training.findById(user.currentTrainingId).lean();
+
+        if (!trainingPlan || !trainingPlan.plan || trainingPlan.plan.length === 0) {
+            // Mensagem caso o treino ativo exista mas esteja vazio
+            return res.status(404).json({ message: 'Seu plano de treino ativo está vazio.' });
+        }
+
+        // 3. Encontra o nome do dia da semana atual
         const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
         const todayName = dayNames[new Date().getDay()];
 
+        // 4. Localiza o treino de hoje no plano
         const todayWorkout = trainingPlan.plan.find(day => day.dayName.toLowerCase() === todayName);
         
+        // 5. Verifica se hoje é um dia de treino ou de descanso
         if (todayWorkout && todayWorkout.exercises && todayWorkout.exercises.length > 0) {
             
-            // <<< MODIFICAÇÃO INÍCIO >>>
-            // Verifica se este treino específico já foi logado hoje.
+            // 6. Verifica se este treino específico já foi logado HOJE
             const today = new Date();
             today.setHours(0, 0, 0, 0); // Zera o tempo para comparar apenas a data
 
             const log = await WorkoutLog.findOne({
                 user: req.user.id,
+                trainingId: trainingPlan._id, // <-- FILTRO CRUCIAL: usa o ID do treino ativo
                 trainingDayName: todayWorkout.dayName,
                 dateCompleted: { $gte: today }
             });
 
             // Adiciona a flag 'isCompleted' ao objeto do treino
-            todayWorkout.isCompleted = !!log; // !!log converte o resultado (objeto ou null) para um booleano (true ou false)
-            // <<< MODIFICAÇÃO FIM >>>
+            todayWorkout.isCompleted = !!log; // Converte o resultado para booleano
 
             res.json({
                 objective: trainingPlan.objective,
-                workout: todayWorkout // O objeto de treino agora contém o status de conclusão
+                workout: todayWorkout // O objeto de treino agora contém o status de conclusão correto
             });
 
         } else {
+            // Resposta para dia de descanso
             res.json({ 
                 isRestDay: true,
                 message: 'Hoje é seu dia de descanso. Aproveite para recarregar!' 
@@ -83,83 +95,85 @@ router.get('/today', authMiddleware, async (req, res) => {
         }
 
     } catch (err) {
-        console.error(err.message);
         res.status(500).send('Erro no Servidor');
     }
 });
 
 router.post('/', authMiddleware, async (req, res) => {
-    // Agora recebemos a assinatura do frontend
+    // Recebe os dados e a assinatura de integridade do frontend
     const { level, objective, frequency, equipment, timePerSession, plan, recommendations, signature } = req.body;
     const userId = req.user.id;
 
-    // <<< 4. VERIFICAR A INTEGRIDADE ANTES DE SALVAR
+    // 1. Verificação de integridade (como estava antes, está correto)
     if (!signature) {
         return res.status(400).json({ error: 'Assinatura de integridade ausente.' });
     }
-
     const planString = JSON.stringify(plan);
     const expectedSignature = crypto
         .createHmac('sha256', process.env.INTEGRITY_SECRET)
         .update(planString)
         .digest('hex');
 
-    if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-        // Assinaturas correspondem, o processo continua...
-        try {
-            let training = await Training.findOne({ user: userId });
-            if (training) {
-                // Atualiza o treino existente
-                training.level = level;
-                training.objective = objective;
-                training.frequency = frequency;
-                training.equipment = equipment;
-                training.timePerSession = timePerSession;
-                training.plan = plan;
-                training.recommendations = recommendations;
-                training.dateGenerated = new Date();
-            } else {
-                // Cria um novo treino
-                training = new Training({
-                    user: userId, level, objective, frequency, equipment, timePerSession, plan, recommendations,
-                    dateGenerated: new Date()
-                });
-            }
-            await training.save();
-            res.status(200).json({ message: 'Treino salvo com sucesso!', training });
-        } catch (error) {
-            console.error('Erro ao salvar ou atualizar treino:', error);
-            if (error.name === 'ValidationError') {
-                const errors = Object.keys(error.errors).map(key => error.errors[key].message);
-                return res.status(400).json({ error: 'Erro de validação ao salvar treino.', details: errors });
-            }
-            res.status(500).json({ error: 'Erro ao salvar ou atualizar treino. Tente novamente mais tarde.' });
+    // Compara as assinaturas de forma segura
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+        return res.status(403).json({ error: 'Falha na verificação de integridade. O plano pode ter sido alterado.' });
+    }
+
+    // Se a assinatura for válida, o processo continua...
+    try {
+        // 2. Cria o novo documento de treino na coleção 'trainings'
+        const newTraining = new Training({
+            user: userId,
+            level,
+            objective,
+            frequency,
+            equipment,
+            timePerSession,
+            plan,
+            recommendations,
+            dateGenerated: new Date()
+        });
+        await newTraining.save();
+
+        // --- INÍCIO DA CORREÇÃO ---
+        // 3. Atualiza o documento do usuário na coleção 'users'
+        //    Definindo o 'currentTrainingId' para o ID do treino que acabamos de criar.
+        await User.findByIdAndUpdate(userId, { currentTrainingId: newTraining._id });
+        
+        // --- FIM DA CORREÇÃO ---
+
+        // 4. Retorna a resposta de sucesso
+        res.status(201).json({ message: 'Treino salvo e definido como ativo com sucesso!', training: newTraining });
+
+    } catch (error) {
+        if (error.name === 'ValidationError') {
+            const errors = Object.values(error.errors).map(e => e.message);
+            return res.status(400).json({ error: 'Dados inválidos.', details: errors });
         }
-    } else {
-        // Assinaturas NÃO correspondem! Rejeita a requisição.
-        return res.status(403).json({ error: 'Falha na verificação de integridade. O plano de treino pode ter sido modificado.' });
+        res.status(500).json({ error: 'Erro interno ao salvar o treino.' });
     }
 });
+
 // Rota para carregar o treino salvo do usuário
 router.get('/', authMiddleware, async (req, res) => {
     const userId = req.user.id;
-
     try {
-        const training = await Training.findOne({ user: userId }).lean(); // Usamos .lean() para obter um objeto JS puro
-
-        if (!training) {
-            return res.status(404).json({ message: 'Nenhum treino salvo encontrado para este usuário.' });
+        const user = await User.findById(userId);
+        if (!user || !user.currentTrainingId) {
+            return res.status(404).json({ message: 'Nenhum treino ativo encontrado para este usuário.' });
         }
 
-        // <<< INÍCIO DA CORREÇÃO >>>
-        // Busca todos os logs de treino do usuário para verificação
-        const logs = await WorkoutLog.find({ user: userId });
+        const activeTraining = await Training.findById(user.currentTrainingId).lean();
+        if (!activeTraining) {
+            return res.status(404).json({ message: 'O treino ativo não foi encontrado.' });
+        }
+
+        // Busca logs APENAS para o treino ativo
+        const logs = await WorkoutLog.find({ user: userId, trainingId: activeTraining._id });
         const completedTodaySet = new Set();
-        
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Cria um conjunto de treinos concluídos HOJE para fácil consulta
         logs.forEach(log => {
             const logDate = new Date(log.dateCompleted);
             logDate.setHours(0, 0, 0, 0);
@@ -168,16 +182,14 @@ router.get('/', authMiddleware, async (req, res) => {
             }
         });
 
-        // Itera sobre cada dia do plano e adiciona a flag 'isCompleted'
-        training.plan.forEach(day => {
+        activeTraining.plan.forEach(day => {
             day.isCompleted = completedTodaySet.has(day.dayName);
         });
-        // <<< FIM DA CORREÇÃO >>>
 
-        res.status(200).json(training); // Retorna o objeto de treino completo e MODIFICADO
+        res.status(200).json(activeTraining);
+
 
     } catch (error) {
-        console.error('Erro ao carregar treino:', error);
         res.status(500).json({ error: 'Erro ao carregar treino. Tente novamente mais tarde.' });
     }
 });
@@ -267,7 +279,6 @@ router.post('/generate-treino', authMiddleware, async (req, res) => {
         res.json(finalResponse);
 
     } catch (error) {
-        console.error('Erro ao gerar treino com a Gemini API:', error);
         // Implementar a extração de JSON robusta que discutimos anteriormente
         // para evitar erros de parse.
         res.status(500).json({ message: 'Erro ao gerar o treino.' });
@@ -285,12 +296,22 @@ router.post('/complete-day', authMiddleware, async (req, res) => {
     }
 
     try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0); // Zera o tempo para comparações de data
 
-        // 1. Garante que o log para este dia ainda não foi feito hoje
+        // 1. Encontra o usuário e o treino ativo
+        const user = await User.findById(userId);
+        if (!user || !user.currentTrainingId) {
+            return res.status(400).json({ message: 'Nenhum treino ativo encontrado para registrar o progresso.' });
+        }
+        
+        const activeTrainingId = user.currentTrainingId;
+
+        // 2. Garante que o log para este dia e treino específico ainda não foi feito hoje
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
         const existingLogToday = await WorkoutLog.findOne({
             user: userId,
+            trainingId: activeTrainingId,
             trainingDayName: dayName,
             dateCompleted: { $gte: today }
         });
@@ -299,70 +320,59 @@ router.post('/complete-day', authMiddleware, async (req, res) => {
             return res.status(409).json({ message: 'Este treino já foi concluído hoje.' });
         }
 
-        // --- VERIFICAÇÃO DE CONQUISTAS ---
-        await checkAndAwardAchievements(userId);
-        // ---------------------------------
-        
-        // Salva o novo log
-        const newLog = new WorkoutLog({ user: userId, trainingDayName: dayName });
+        // 3. Salva o novo log
+        const newLog = new WorkoutLog({
+            user: userId,
+            trainingId: activeTrainingId,
+            trainingDayName: dayName,
+            dateCompleted: new Date()
+        });
         await newLog.save();
 
-        // 2. Busca o plano de treino completo do usuário
-        const userTrainingPlan = await Training.findOne({ user: userId });
-        if (!userTrainingPlan || !userTrainingPlan.plan || userTrainingPlan.plan.length === 0) {
-            return res.status(201).json({ message: `Treino '${dayName}' concluído!`, allDone: false, weekCompleted: false });
+        // --- LÓGICA DE XP E CONCLUSÃO DE SEMANA ---
+        const userTrainingPlan = await Training.findById(activeTrainingId);
+        if (!userTrainingPlan || !userTrainingPlan.plan) {
+            return res.status(200).json({ message: `Treino '${dayName}' concluído!`, weekCompleted: false, gainedXp: 10 });
         }
         
-        // Lógica de XP diário
         const dayPlan = userTrainingPlan.plan.find(d => d.dayName === dayName);
-        const isRestDay = !dayPlan || !dayPlan.exercises || dayPlan.exercises.length === 0;
-        let dailyXp = isRestDay ? 0 : 10;
+        const dailyXp = (!dayPlan || !dayPlan.exercises || dayPlan.exercises.length === 0) ? 0 : 10;
 
-        // 3. Lógica de Verificação Semanal
-        const totalWeeklyWorkouts = userTrainingPlan.plan.filter(d => d.exercises && d.exercises.length > 0).length;
-        
-        // Calcula o início (Segunda) e fim (Domingo) da semana atual
-        const firstDayOfWeek = new Date(today);
-        const dayIndex = today.getDay(); // 0-Dom, 1-Seg, ..., 6-Sáb
-        const diff = today.getDate() - dayIndex + (dayIndex === 0 ? -6 : 1); // Ajusta para segunda-feira
-        firstDayOfWeek.setDate(diff);
-        const lastDayOfWeek = new Date(firstDayOfWeek);
-        lastDayOfWeek.setDate(firstDayOfWeek.getDate() + 7);
-
-        // Conta quantos dias de treino *únicos* foram completados nesta semana
-        const completedThisWeekLogs = await WorkoutLog.distinct('trainingDayName', {
+        // --- INÍCIO DA CORREÇÃO ---
+        // Garante que o ID é um ObjectId antes de usar na consulta 'distinct'
+        const trainingObjectId = new mongoose.Types.ObjectId(activeTrainingId);
+        const completedDayNames = await WorkoutLog.distinct('trainingDayName', {
             user: userId,
-            dateCompleted: { $gte: firstDayOfWeek, $lt: lastDayOfWeek }
+            trainingId: trainingObjectId // Usando o ObjectId garantido
         });
+        // --- FIM DA CORREÇÃO ---
+        
+        
+        const totalWeeklyWorkouts = userTrainingPlan.plan.filter(d => d.exercises && d.exercises.length > 0).length;
         
         let weeklyBonusXp = 0;
         let weekCompleted = false;
 
-        // 4. Verifica se a semana foi concluída
-        if (completedThisWeekLogs.length >= totalWeeklyWorkouts) {
+        if (completedDayNames.length >= totalWeeklyWorkouts) {
             weekCompleted = true;
-            weeklyBonusXp = 50; // Recompensa semanal
+            weeklyBonusXp = 50;
         }
 
-        // 5. Atualiza o XP do usuário com o total
         const totalXpGained = dailyXp + weeklyBonusXp;
-        const user = await User.findByIdAndUpdate(
-            userId,
-            { $inc: { xp: totalXpGained } },
-            { new: true }
-        );
+        if (totalXpGained > 0) {
+            await User.findByIdAndUpdate(userId, { $inc: { xp: totalXpGained } });
+        }
 
-        // 6. Envia a resposta final para o frontend
-        res.status(200).json({
-            message: weekCompleted ? "Semana concluída com sucesso!" : `Treino '${dayName}' concluído!`,
-            allDone: !isRestDay, // Animação diária
-            weekCompleted: weekCompleted, // Animação semanal
-            newXp: user.xp,
+        // 7. Envia a resposta final para o frontend
+        const responsePayload = {
+            message: weekCompleted ? "Parabéns! Você concluiu todos os dias deste treino!" : `Treino '${dayName}' concluído com sucesso!`,
+            weekCompleted: weekCompleted,
             gainedXp: totalXpGained
-        });
+        };
+        
+        res.status(200).json(responsePayload);
 
     } catch (error) {
-        console.error('Erro ao marcar treino como concluído:', error);
         res.status(500).json({ message: 'Erro no servidor ao salvar o progresso.' });
     }
 });
@@ -372,10 +382,12 @@ router.post('/complete-day', authMiddleware, async (req, res) => {
 router.get('/logs', authMiddleware, async (req, res) => {
     try {
         const userId = req.user.id;
-        const logs = await WorkoutLog.find({ user: userId }).sort({ dateCompleted: -1 }); // Ordena do mais recente para o mais antigo
+        // Retorna todos os logs, o frontend pode filtrar/agrupar se necessário
+        const logs = await WorkoutLog.find({ user: userId })
+            .populate('trainingId', 'dateGenerated objective') // Popula com dados do treino
+            .sort({ dateCompleted: -1 });
         res.status(200).json(logs);
     } catch (error) {
-        console.error('Erro ao buscar logs de treino:', error);
         res.status(500).json({ message: 'Erro no servidor ao buscar histórico de treinos.' });
     }
 });
@@ -455,8 +467,7 @@ router.get('/stats', authMiddleware, async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Erro ao buscar estatísticas de progresso:", error);
-        res.status(500).json({ message: "Erro ao buscar estatísticas." });
+        res.status(500).json({ message: "Erro ao buscar estatísticas de progresso." });
     }
 });
 

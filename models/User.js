@@ -27,63 +27,31 @@ const UnlockedAchievementSchema = new mongoose.Schema({
 }, { _id: false });
 
 const UserSchema = new mongoose.Schema({
-    username: {
-        type: String,
-        required: true,
-        unique: true,
-        trim: true
-    },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-        trim: true
-    },
-    password: {
-        type: String,
-        // Senha não é obrigatória para permitir login com Google
-    },
-    googleId: {
-        type: String,
-        unique: true,
-        sparse: true // Permite múltiplos documentos nulos, mas valores únicos se existirem
-    },
-    role: {
-        type: String,
-        enum: ['user', 'admin', 'vip'],
-        default: 'user'
-    },
+    username: { type: String, required: true, unique: true, trim: true },
+    email: { type: String, required: true, unique: true, trim: true },
+    password: { type: String },
+    googleId: { type: String, unique: true, sparse: true },
+    role: { type: String, enum: ['user', 'admin', 'vip'], default: 'user' },
     profilePicture: {
         type: String,
-        default: 'https://res.cloudinary.com/gymrats/image/upload/v1716339538/default_avatar.png'
-    },
-    xp: {
-        type: Number,
-        default: 0
-    },
-    isActive: {
-        type: Boolean,
-        default: true
-    },
-    // --- CAMPOS DE PROGRESSÃO ADICIONADOS ---
+          default: function() {
+            const initial = this.username ? this.username.charAt(0).toUpperCase() : 'A';
+            return `https://placehold.co/100x100/1E1E1E/ffd75d?text=${initial}`;
+          }
+      },
+    xp: { type: Number, default: 0 },
+    isActive: { type: Boolean, default: true },
     mainObjective: String,
     experienceLevel: String,
-    progress: {
-        weight: [ProgressEntrySchema], // Histórico de peso
-        measurements: {
-            biceps: [ProgressEntrySchema],
-            chest: [ProgressEntrySchema],
-            waist: [ProgressEntrySchema],
-            hips: [ProgressEntrySchema],
-            thighs: [ProgressEntrySchema] // Coxas
-        }
+    
+    currentTrainingId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Training'
     },
-    unlockedAchievements: [UnlockedAchievementSchema], // Histórico de conquistas
-    // -----------------------------------------
-    createdAt: {
-        type: Date,
-        default: Date.now
-    }
+
+    progress: {},
+    unlockedAchievements: [],
+    createdAt: { type: Date, default: Date.now }
 });
 
 // Hook para criptografar a senha antes de salvar
