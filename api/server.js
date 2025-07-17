@@ -3,21 +3,33 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-const connectDB = require('../config/db'); // Corrigido para 'db'
-const authMiddleware = require('../middleware/auth'); // Importa o middleware de autenticação
-const adminAuth = require('../middleware/admin'); // Importa o middleware de autenticação
+// Configuração personalizada do CORS para permitir domínios específicos
+const corsOptions = {
+  origin: [
+    'http://127.0.0.1:5501',
+    'https://equipegymrats.github.io'
+  ],
+  credentials: true, // Permite envio de cookies/autenticação se necessário
+};
+
+module.exports = { express, cors, corsOptions };
+
+const connectDB = require('../config/db');
+const authMiddleware = require('../middleware/auth');
+const adminAuth = require('../middleware/admin');
 const User = require('../models/User');
 const Training = require('../models/Training');
-const postRoutes = require('../routes/Posts'); // <<< ADICIONE ESTA LINHA
-const rateLimit = require('express-rate-limit'); // <<< 1. IMPORTAR
+const postRoutes = require('../routes/Posts');
+const rateLimit = require('express-rate-limit');
 const trainingRoutes = require('../routes/training');
-const authRoutes = require('../routes/auth'); // Importa as rotas de autenticação
-const nutritionRoutes = require('../routes/nutrition'); // <<< ADICIONE ESTA LINHA
-const crypto = require('crypto'); // <<< ADICIONAR ESTA LINHA
-const reminderRoutes = require('../routes/reminders'); // <<< ADICIONE ESTA LINHA
+const authRoutes = require('../routes/auth');
+const nutritionRoutes = require('../routes/nutrition');
+const crypto = require('crypto');
+const reminderRoutes = require('../routes/reminders');
 const pushRoutes = require('../routes/push');
 const { initializeScheduler } = require('../services/notificationScheduler');
 const achievementRoutes = require('../routes/achievements'); 
+const notificationRoutes = require('../routes/notifications');
 
 // Configuração do Express
 const app = express();
@@ -47,7 +59,7 @@ app.use(globalLimiter);
 
 // Conecta ao banco de dados
 connectDB();
-app.use(cors());
+app.use(cors(corsOptions));
 
 app.use(express.static('public'));
 app.use(express.json());
@@ -61,6 +73,7 @@ app.use('/nutrition', nutritionRoutes);
 app.use('/push', authMiddleware, pushRoutes);
 app.use('/user', require('../routes/user'));
 app.use('/achievements', achievementRoutes);
+app.use('/notifications', authMiddleware, notificationRoutes);
 
 app.get('/connect', (req, res) => {
   res.send('API Gym Rats está no ar!');
@@ -435,7 +448,7 @@ app.get('/dashboard/training-nutrition', authMiddleware, adminAuth, async (req, 
     }
 });
 
-initializeScheduler(); // <<< ADICIONE ESTA LINHA
+initializeScheduler();
 
 app.listen(port, () => {
     console.log(`+ Servidor rodando em http://localhost:${port}`);
